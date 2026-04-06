@@ -31,10 +31,16 @@ app = FastAPI(title="Reef Scanner + Copy Trading")
 import sys
 sys.path.insert(0, str(BASE_DIR))
 try:
-    from config import COPY_MIN_ALLOC_SOL, COPY_MAX_ALLOC_SOL
+    from config import COPY_MIN_ALLOC_SOL, COPY_MAX_ALLOC_SOL, COPY_TRADES_FILE
 except ImportError:
     COPY_MIN_ALLOC_SOL = 0.001
     COPY_MAX_ALLOC_SOL = 10.0
+
+try:
+    from positions import load_positions, get_positions_summary, POSITIONS_FILE
+    HAS_POSITIONS = True
+except ImportError:
+    HAS_POSITIONS = False
 
 
 # ── Thread-Safe TTL Cache ─────────────────────────────────────────────
@@ -294,6 +300,17 @@ pre { font-size: 11px; overflow-x: auto; max-height: 200px; }
 .save-changes-btn:hover { opacity: 0.85; }
 .save-changes-btn:disabled { background: #30363d; color: #7d8590; cursor: not-allowed; }
 .pending-indicator { display: inline-block; width: 8px; height: 8px; background: #9e6a03; border-radius: 50%; margin-left: 8px; }
+.positions-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; margin-top: 12px; }
+.position-card { background: #0d1117; border: 1px solid #21262d; border-radius: 6px; padding: 12px; }
+.position-card.profit { border-color: #3b4f3b; }
+.position-card.loss { border-color: #4f3b3b; }
+.position-token { font-size: 11px; color: #7d8590; word-break: break-all; margin-bottom: 4px; }
+.position-amount { font-size: 16px; font-weight: 700; }
+.position-value { font-size: 12px; color: #7d8590; margin-top: 2px; }
+.position-pnl { font-size: 12px; font-weight: 600; margin-top: 4px; }
+.position-pnl.positive { color: #3fb950; }
+.position-pnl.negative { color: #f85149; }
+.position-meta { font-size: 10px; color: #484f58; margin-top: 4px; }
 .set-wallet-form { display: flex; gap: 8px; justify-content: center; margin-top: 12px; }
 .set-wallet-form input { background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #e6edf3; padding: 8px 12px; width: 400px; font-size: 13px; }
 .set-wallet-form input:focus { outline: none; border-color: #58a6ff; }
@@ -466,6 +483,13 @@ def build_dashboard_html() -> str:
             f'<div class="wallet-stat"><div class="wallet-stat-value" id="wstat-total-sell">—</div><div class="wallet-stat-label">Total Sells</div></div>'
             f'<div class="wallet-stat"><div class="wallet-stat-value" id="wstat-avg-win">—</div><div class="wallet-stat-label">Avg Win (SOL)</div></div>'
             f'<div class="wallet-stat"><div class="wallet-stat-value" id="wstat-avg-loss">—</div><div class="wallet-stat-label">Avg Loss (SOL)</div></div>'
+            f'</div>'
+            f'<div id="positions-container" style="margin-top:20px">'
+            f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'
+            f'<h3 style="margin:0;font-size:13px;color:#7d8590">📦 MY POSITIONS</h3>'
+            f'<span id="positions-total" style="font-size:12px;color:#7d8590"></span>'
+            f'</div>'
+            f'<div class="positions-grid" id="positions-grid"></div>'
             f'</div></div>'
         )
     else:
@@ -637,6 +661,19 @@ async def get_wallets():
     wallets = load_wallets_cached()
     sorted_wallets = sorted(wallets, key=lambda w: float(w.get("score", 0)), reverse=True)
     return JSONResponse(sorted_wallets[:50])
+
+
+@app.get("/api/positions")
+async def get_positions():
+    """Get current token positions with live prices and PnL."""
+    if not HAS_POSITIONS:
+        return JSONResponse([])
+    try:
+        positions = load_positions()
+        summary = await get_positions_summary(positions)
+        return JSONResponse(summary)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 @app.get("/api/wallet/stats")

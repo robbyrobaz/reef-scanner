@@ -288,10 +288,51 @@ async function savePendingChanges() {
   refreshCopy();
 }
 
+// ── Position display ─────────────────────────────────────────────────
+async function refreshPositions() {
+  if (activeTab !== "copy") return;
+  var data = await api("/api/positions");
+  if (!data || !Array.isArray(data)) return;
+  
+  var grid = document.getElementById("positions-grid");
+  var totalEl = document.getElementById("positions-total");
+  if (!grid) return;
+  
+  if (data.length === 0) {
+    grid.innerHTML = '<div class="position-card"><div class="position-token" style="text-align:center;color:#7d8590">No open positions</div></div>';
+    if (totalEl) totalEl.textContent = "";
+    return;
+  }
+  
+  var totalValue = 0, totalPnl = 0;
+  var html = data.map(function(p) {
+    totalValue += Number(p.current_value_sol || 0);
+    totalPnl += Number(p.pnl_sol || 0);
+    var isProfit = Number(p.pnl_sol || 0) >= 0;
+    var cardClass = isProfit ? "position-card profit" : "position-card loss";
+    var pnlClass = isProfit ? "position-pnl positive" : "position-pnl negative";
+    var pnlSign = isProfit ? "+" : "";
+    var shortMint = (p.token_mint || "").slice(0, 8) + "..." + (p.token_mint || "").slice(-4);
+    return '<div class="' + cardClass + '">' +
+      '<div class="position-token" title="' + (p.token_mint || "") + '">' + shortMint + '</div>' +
+      '<div class="position-amount">' + Number(p.amount || 0).toFixed(4) + '</div>' +
+      '<div class="position-value">~' + Number(p.current_value_sol || 0).toFixed(4) + ' SOL</div>' +
+      '<div class="' + pnlClass + '">' + pnlSign + Number(p.pnl_sol || 0).toFixed(4) + ' SOL (' + pnlSign + Number(p.pnl_pct || 0).toFixed(1) + '%)</div>' +
+      '<div class="position-meta">Avg: ' + Number(p.avg_price_sol || 0).toFixed(9) + ' SOL</div>' +
+      '</div>';
+  }).join("");
+  
+  grid.innerHTML = html;
+  if (totalEl) {
+    var totalClass = totalPnl >= 0 ? "positive" : "negative";
+    totalEl.innerHTML = 'Total: <span class="' + totalClass + '" style="font-weight:600">' + (totalPnl >= 0 ? "+" : "") + totalPnl.toFixed(4) + ' SOL</span> in ' + data.length + ' position(s)';
+  }
+}
+
 // ── Background polling — no full page reload ────────────────────────────
 function backgroundRefresh() {
   if (activeTab === "discovery") refreshStats();
-  else if (activeTab === "copy") { refreshCopy(); refreshWalletStats(); }
+  else if (activeTab === "copy") { refreshCopy(); refreshWalletStats(); refreshPositions(); }
 }
 setInterval(backgroundRefresh, 10000);
 setTimeout(backgroundRefresh, 3000);

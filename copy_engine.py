@@ -1,10 +1,11 @@
 """
 Reef Copy Trading Engine
 
-Monitors target wallets and copies their trades.
-Run: python copy_engine.py
+Monitors target wallets and copies their trades in real-time.
+Run: python copy_engine.py [--live]
 
-Uses polling mode (no webhooks yet) for simplicity.
+Uses DRY_RUN mode by default. Pass --live to execute real trades.
+Requires a keypair file (set KEYPAIR_FILE env or use data/keypair.json).
 """
 
 import asyncio
@@ -12,9 +13,9 @@ import csv
 import os
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, asdict, field
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -27,76 +28,28 @@ from config import (
     COPY_MAX_ALLOC_SOL,
     COPY_CONFIG_FILE,
     COPY_TRADES_FILE,
+    COPY_PRIORITY_FEE_LAMPORTS,
     DATA_DIR,
 )
 from copy_config import load_copy_config, save_copy_config, CopyConfig, CopyEntry
 from swap_parser import parse_transaction_for_swaps, ParsedSwap
+from swap_executor import execute_swap_legacy, load_solana_keypair, DRY_RUN as EXECUTOR_DRY_RUN, SwapResult
+from positions import (
+    load_positions, save_positions, add_position_from_trade, reduce_position,
+    check_should_sell, get_positions_summary, refresh_positions,
+    POSITIONS_FILE,
+)
+
+# ── Engine state ────────────────────────────────────────────────────────
+DRY_RUN = True  # Default to safe mode
+KEYPAIR_LOADED = None
+POSITIONS: Dict[str, "Position"] = {}
 
 
-DRY_RUN = True  # True = log only, no actual trades
-
-
-# ── RPC Helpers ──────────────────────────────────────────────────────────
-
-async def get_signatures_for_address(
-    address: str,
-    before: Optional[str] = None,
-    limit: int = 100,
-) -> List[dict]:
-    """Get signatures for a wallet address"""
-    try:
-        import aiohttp
-        async with aiohttp.ClientSession() as session:
-            params = {"commitment": "confirmed", "limit": limit}
-            if before:
-                params["before"] = before
-            async with session.post(
-                HELIUS_RPC_URL,
-                json={
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "getSignaturesForAddress",
-                    "params": [address, params],
-                },
-                timeout=aiohttp.ClientTimeout(total=15),
-            ) as resp:
-                data = await resp.json()
-                return data.get("result", [])
-    except Exception as e:
-        print(f"    ⚠️  RPC error getting sigs: {e}")
-        return []
-
-
-async def get_transaction(sig: str) -> Optional[dict]:
-    """Get a parsed transaction"""
-    try:
-        import aiohttp
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                HELIUS_RPC_URL,
-                json={
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "getTransaction",
-                    "params": [
-                        sig,
-                        {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0},
-                    ],
-                },
-                timeout=aiohttp.ClientTimeout(total=15),
-            ) as resp:
-                data = await resp.json()
-                return data.get("result")
-    except Exception as e:
-        print(f"    ⚠️  RPC error getting tx: {e}")
-        return None
-
-
-# ── Copy Trade Log ────────────────────────────────────────────────────────
+# ── Copy Trade Record ────────────────────────────────────────────────────
 
 @dataclass
 class CopyTrade:
-    """Record of a copied trade"""
     timestamp: int
     source_wallet: str
     source_sig: str
@@ -108,12 +61,11 @@ class CopyTrade:
     scaled_amount_sol: float = 0.0
     source_price_sol: float = 0.0
     our_price_sol: float = 0.0
-    status: str = "pending"  # pending, confirmed, failed
+    status: str = "pending"   # pending, confirmed, failed, dry_run
     error: str = ""
 
 
 def load_copy_trades() -> List[CopyTrade]:
-    """Load copy trade history from CSV"""
     trades = []
     if not os.path.exists(COPY_TRADES_FILE):
         return trades
@@ -139,7 +91,6 @@ def load_copy_trades() -> List[CopyTrade]:
 
 
 def save_copy_trade(trade: CopyTrade) -> None:
-    """Append a copy trade to CSV"""
     file_exists = os.path.exists(COPY_TRADES_FILE)
     with open(COPY_TRADES_FILE, "a", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=[
@@ -167,6 +118,138 @@ def save_copy_trade(trade: CopyTrade) -> None:
         })
 
 
+# ── RPC Helpers ──────────────────────────────────────────────────────────
+
+async def get_signatures_for_address(
+    address: str,
+    before: Optional[str] = None,
+    limit: int = 100,
+) -> List[dict]:
+    try:
+        import aiohttp
+        async with aiohttp.ClientSession() as session:
+            params = {"commitment": "confirmed", "limit": limit}
+            if before:
+                params["before"] = before
+            async with session.post(
+                HELIUS_RPC_URL,
+                json={
+                    "jsonrpc": "2.0", "id": 1,
+                    "method": "getSignaturesForAddress",
+                    "params": [address, params],
+                },
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                data = await resp.json()
+                return data.get("result", [])
+    except Exception as e:
+        print(f"    ⚠️  RPC error getting sigs: {e}")
+        return []
+
+
+async def get_transaction(sig: str) -> Optional[dict]:
+    try:
+        import aiohttp
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                HELIUS_RPC_URL,
+                json={
+                    "jsonrpc": "2.0", "id": 1,
+                    "method": "getTransaction",
+                    "params": [sig, {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}],
+                },
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                data = await resp.json()
+                return data.get("result")
+    except Exception as e:
+        print(f"    ⚠️  RPC error getting tx: {e}")
+        return None
+
+
+# ── Swap Execution ───────────────────────────────────────────────────────
+
+async def execute_copy_trade(trade: CopyTrade) -> bool:
+    """
+    Execute a copy trade: BUY or SELL via Jupiter.
+    Returns True if successful.
+    """
+    global KEYPAIR_LOADED, POSITIONS
+    
+    if KEYPAIR_LOADED is None:
+        KEYPAIR_LOADED = await load_solana_keypair()
+    
+    if KEYPAIR_LOADED is None:
+        print(f"    ⚠️  No keypair — cannot execute real trades")
+        return False
+    
+    SOL_MINT = "So11111111111111111111111111111111111111111112"
+    
+    try:
+        if trade.action == "BUY":
+            # Swap SOL for the token
+            result = await execute_swap_legacy(
+                KEYPAIR_LOADED,
+                SOL_MINT,          # Input: SOL
+                trade.token_mint,   # Output: the meme coin
+                trade.scaled_amount_sol,
+                slippage_bps=200,   # 2% slippage for volatile meme coins
+            )
+            
+            if result.success:
+                trade.our_sig = result.signature
+                trade.our_price_sol = result.price_sol if result.price_sol > 0 else trade.source_price_sol
+                
+                # Update position tracker
+                if result.output_amount > 0:
+                    tokens_bought = result.output_amount
+                    POSITIONS = add_position_from_trade(
+                        POSITIONS, trade.token_mint,
+                        tokens_bought, trade.our_price_sol,
+                        trade.source_wallet,
+                    )
+                    save_positions(POSITIONS)
+                    print(f"    ✅ BUY executed: {tokens_bought:.4f} tokens at ~{trade.our_price_sol:.9f} SOL/token | sig: {result.signature[:20]}...")
+                return True
+            else:
+                trade.error = result.error
+                return False
+        
+        elif trade.action == "SELL":
+            # Sell the token for SOL
+            if trade.token_mint not in POSITIONS:
+                print(f"    ⚠️  No position to sell for {trade.token_mint[:16]}...")
+                # Try to sell anyway using the balance from source trade
+            
+            result = await execute_swap_legacy(
+                KEYPAIR_LOADED,
+                trade.token_mint,    # Input: the meme coin
+                SOL_MINT,            # Output: SOL
+                trade.scaled_amount_sol * 0.999,  # Slightly less to handle rounding
+                slippage_bps=200,
+            )
+            
+            if result.success:
+                trade.our_sig = result.signature
+                trade.our_price_sol = result.price_sol if result.price_sol > 0 else trade.source_price_sol
+                
+                # Reduce position tracker
+                POSITIONS = reduce_position(POSITIONS, trade.token_mint, trade.scaled_amount_sol)
+                save_positions(POSITIONS)
+                print(f"    ✅ SELL executed: {trade.scaled_amount_sol:.4f} SOL worth at ~{trade.our_price_sol:.9f} SOL/token | sig: {result.signature[:20]}...")
+                return True
+            else:
+                trade.error = result.error
+                return False
+        
+        return False
+    
+    except Exception as e:
+        print(f"    ❌ Copy trade failed: {e}")
+        trade.error = str(e)
+        return False
+
+
 # ── Core Engine ──────────────────────────────────────────────────────────
 
 async def check_wallet_for_new_trades(
@@ -175,9 +258,9 @@ async def check_wallet_for_new_trades(
     our_wallet: str,
 ) -> List[CopyTrade]:
     """Check a wallet for new trades since last_sig"""
+    global POSITIONS
+    
     new_trades = []
-
-    # Get signatures newer than last_sig
     sigs = await get_signatures_for_address(wallet_addr, limit=10)
     if not sigs:
         return []
@@ -193,8 +276,7 @@ async def check_wallet_for_new_trades(
     if not new_sigs:
         return []
 
-    # Process oldest first
-    new_sigs = list(reversed(new_sigs))
+    new_sigs = list(reversed(new_sigs))  # Oldest first
 
     for sig_info in new_sigs:
         sig = sig_info["signature"]
@@ -202,12 +284,16 @@ async def check_wallet_for_new_trades(
         if not tx:
             continue
 
-        # Parse for DEX swaps
         swaps = parse_transaction_for_swaps(tx)
         if not swaps:
             continue
 
         for swap in swaps:
+            # Scale amount based on our allocation
+            scale = min(1.0, entry.alloc_sol / max(swap.amount_sol, 0.0001))
+            scaled_sol = round(swap.amount_sol * scale, 9)
+            scaled_sol = max(COPY_MIN_ALLOC_SOL, min(COPY_MAX_ALLOC_SOL, scaled_sol))
+
             trade = CopyTrade(
                 timestamp=int(time.time()),
                 source_wallet=wallet_addr,
@@ -216,78 +302,60 @@ async def check_wallet_for_new_trades(
                 action=swap.action,
                 token_mint=swap.token_mint,
                 amount_sol=swap.amount_sol,
-                scaled_amount_sol=min(entry.alloc_sol, swap.amount_sol),
+                scaled_amount_sol=scaled_sol,
                 source_price_sol=swap.price_sol,
             )
 
-            if DRY_RUN:
-                print(f"    🐸 DRY RUN: would copy {swap.action} {swap.amount_sol:.4f} SOL "
-                      f"({entry.alloc_sol:.4f} SOL allocated) of token {swap.token_mint[:16]}...")
-                trade.status = "dry_run"
-            else:
-                # Real execution
-                result = await execute_copy_trade(trade)
-                if result:
-                    trade.status = "confirmed"
-                else:
-                    trade.status = "failed"
+            # Handle SELL specially — check if we should follow
+            if swap.action == "SELL":
+                should_follow = check_should_sell(POSITIONS, swap.token_mint, wallet_addr)
+                if not should_follow:
+                    print(f"    ⏭  Skipping SELL of {swap.token_mint[:16]}... (not holding)")
+                    continue
 
-            save_copy_trade(trade)
-            new_trades.append(trade)
+            # Skip if copying from our own wallet (would create infinite loop)
+            if wallet_addr == our_wallet:
+                print(f"    ⏭  Skipping self-copy of {wallet_addr[:16]}...")
+                continue
+
+            if DRY_RUN:
+                print(f"    🐸 DRY RUN: copy {swap.action} {swap.amount_sol:.4f} SOL "
+                      f"(alloc {entry.alloc_sol:.4f}) of {swap.token_mint[:16]}...")
+                trade.status = "dry_run"
+                save_copy_trade(trade)
+                new_trades.append(trade)
+            else:
+                success = await execute_copy_trade(trade)
+                trade.status = "confirmed" if success else "failed"
+                save_copy_trade(trade)
+                new_trades.append(trade)
 
     return new_trades
 
 
-async def execute_copy_trade(trade: CopyTrade) -> bool:
-    """
-    Execute a copy trade.
-    Returns True if successful, False otherwise.
-    
-    This is the critical path — needs to be FAST.
-    """
-    try:
-        import aiohttp
-
-        # TODO: Build and sign the actual swap transaction
-        # For pump.fun: use the swap instruction from pump.fun program
-        # For raydium/orca: use their swap instruction
-        #
-        # Key steps:
-        # 1. Get user's wallet keypair from environment/keystore
-        # 2. Build swap instruction with scaled amount
-        # 3. Add priority fee
-        # 4. Send transaction via Helius
-        # 5. Wait for confirmation
-
-        print(f"    ⚠️  execute_copy_trade() not yet implemented — "
-              f"need user keypair + swap instruction builder")
-        return False
-
-    except Exception as e:
-        print(f"    ❌ Copy trade failed: {e}")
-        trade.error = str(e)
-        return False
-
-
 async def run_engine_cycle(config: CopyConfig) -> int:
-    """Run one cycle of the copy engine. Returns number of trades copied."""
+    """Run one cycle. Returns number of trades processed."""
+    global POSITIONS
+    
     if not config.global_enabled:
         return 0
+
+    # Refresh positions from on-chain before checking
+    if config.user_wallet:
+        POSITIONS = await refresh_positions(POSITIONS, config.user_wallet)
 
     enabled_copies = {addr: e for addr, e in config.copies.items() if e.enabled}
     if not enabled_copies:
         return 0
 
-    total_copied = 0
-
+    total = 0
     for wallet_addr, entry in enabled_copies.items():
         try:
             trades = await check_wallet_for_new_trades(
                 wallet_addr, entry, config.user_wallet
             )
-            total_copied += len(trades)
+            total += len(trades)
 
-            # Update last_sig for this wallet
             if trades:
                 latest_sig = trades[-1].source_sig
                 entry.last_sig = latest_sig
@@ -296,27 +364,38 @@ async def run_engine_cycle(config: CopyConfig) -> int:
         except Exception as e:
             print(f"    ⚠️  Error checking {wallet_addr[:16]}...: {e}")
 
-    if total_copied > 0:
+    if total > 0:
         save_copy_config(config)
 
-    return total_copied
+    return total
 
 
 async def run_engine():
-    """Main loop — run engine cycle every N seconds"""
+    global DRY_RUN, KEYPAIR_LOADED
+    
     print("=" * 60)
     print("🏄 Reef Copy Trading Engine")
     print("=" * 60)
-    print(f"   Dry run: {DRY_RUN}")
+    
+    DRY_RUN = "--live" not in sys.argv
+    print(f"   Mode: {'🐸 DRY RUN' if DRY_RUN else '🔴 LIVE — REAL TRADES'}")
     print(f"   Poll interval: {COPY_ENGINE_INTERVAL_S}s")
-    print(f"   Config: {COPY_CONFIG_FILE}")
     print()
 
-    # Check config
+    # Load positions
+    POSITIONS = load_positions()
+    print(f"   Loaded {len(POSITIONS)} positions from disk")
+
+    # Try to load keypair (even in DRY_RUN, we load to verify it exists)
+    KEYPAIR_LOADED = await load_solana_keypair()
+    if KEYPAIR_LOADED:
+        print(f"   Keypair: {KEYPAIR_LOADED.pubkey()}")
+    else:
+        print(f"   ⚠️  No keypair — add KEYPAIR_FILE or run with --live to enable real trades")
+
     config = load_copy_config()
     if not config.user_wallet:
-        print("⚠️  No user wallet set! Run: python copy_config.py --set-wallet <ADDRESS>")
-        print("   Or use the dashboard at http://localhost:8891")
+        print("   ⚠️  No user wallet set!")
     else:
         print(f"   User wallet: {config.user_wallet[:16]}...")
 
@@ -328,13 +407,11 @@ async def run_engine():
     while True:
         try:
             config = load_copy_config()
-            if config.global_enabled and enabled_count > 0:
+            if config.global_enabled:
                 copied = await run_engine_cycle(config)
                 if copied > 0:
-                    print(f"  ✅ Copied {copied} trade(s)")
-            else:
-                if not config.global_enabled:
-                    pass  # Silent idle
+                    status = "🐸" if DRY_RUN else "✅"
+                    print(f"  {status} {copied} trade(s) processed")
         except Exception as e:
             print(f"  ❌ Engine error: {e}")
 
@@ -342,11 +419,4 @@ async def run_engine():
 
 
 if __name__ == "__main__":
-    if "--dry-run" not in sys.argv:
-        DRY_RUN = True
-
-    if "--live" in sys.argv:
-        DRY_RUN = False
-        print("⚠️  LIVE MODE — real trades will be executed!")
-
     asyncio.run(run_engine())

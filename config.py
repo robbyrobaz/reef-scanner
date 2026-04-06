@@ -33,6 +33,7 @@ COPY_MAX_ALLOC_SOL = 10.0        # Max SOL per copy trade
 COPY_PRIORITY_FEE_LAMPORTS = 1_000_000  # 0.001 SOL priority fee for speed
 COPY_CONFIG_FILE = f"{DATA_DIR}/copy_config.json"
 COPY_TRADES_FILE = f"{DATA_DIR}/copy_trades.csv"
+KEYPAIR_FILE = f"{DATA_DIR}/keypair.json"  # User's trading wallet keypair
 
 # ── Scanner Settings ───────────────────────────────────────────────────
 # Wallets to scan (add your seed list here)
