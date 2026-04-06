@@ -23,12 +23,28 @@ class WalletMetrics:
     last_active: Optional[datetime] = None
     favorite_token: str = ""
     trade_pairs: list = field(default_factory=list)
+    # Activity span and gap metrics
+    span_seconds: int = 0          # First to last swap
+    avg_gap_seconds: float = 0.0   # Avg time between swaps
 
     @property
     def win_rate(self) -> float:
         if self.total_trades == 0:
             return 0.0
         return self.win_count / self.total_trades
+
+    @property
+    def trader_type(self) -> str:
+        """Categorize trader based on avg gap between swaps"""
+        from config import BOT_GAP_THRESHOLD_S
+        if BOT_GAP_THRESHOLD_S > 0 and self.avg_gap_seconds < BOT_GAP_THRESHOLD_S:
+            return "BOT"
+        elif self.avg_gap_seconds < 60:
+            return "FAST"
+        elif self.avg_gap_seconds < 300:
+            return "ACTIVE"
+        else:
+            return "SWING"
 
     @property
     def score(self) -> float:

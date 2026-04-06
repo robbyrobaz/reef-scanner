@@ -18,9 +18,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import (
     HELIUS_API_KEY,
     HELIUS_RPC_URL,
+    MIN_TRADES,
     MIN_TRADES_30D,
     MIN_WIN_RATE,
     MIN_AVG_ROI,
+    MIN_SPAN_HOURS,
+    BOT_GAP_THRESHOLD_S,
     ACTIVITY_WINDOW_DAYS,
     WALLET_DB_FILE,
     DATA_DIR,
@@ -208,6 +211,13 @@ def calculate_metrics(wallet: str, swaps: List[ParsedSwap]) -> Optional[WalletMe
     # Sort by time (oldest first for ROI calc)
     swaps = sorted(swaps, key=lambda s: s.block_time)
 
+    # ── Span & Gap metrics ──
+    if len(swaps) >= 2:
+        times = [s.block_time for s in swaps]
+        metrics.span_seconds = max(times) - min(times)
+        gaps = [times[i+1] - times[i] for i in range(len(times)-1)]
+        metrics.avg_gap_seconds = sum(gaps) / len(gaps)
+
     # Group by token
     token_swaps: Dict[str, List[ParsedSwap]] = defaultdict(list)
     for swap in swaps:
@@ -269,11 +279,14 @@ def calculate_metrics(wallet: str, swaps: List[ParsedSwap]) -> Optional[WalletMe
 
 def filter_and_rank(wallets: List[WalletMetrics]) -> List[WalletMetrics]:
     """Filter by thresholds and rank by score"""
+    from config import MIN_TRADES, MIN_WIN_RATE, MIN_SPAN_HOURS, MIN_AVG_ROI
+
     filtered = [
         w for w in wallets
-        if w.total_trades >= MIN_TRADES_30D
+        if w.total_trades >= MIN_TRADES
         and w.win_rate >= MIN_WIN_RATE
         and w.avg_roi >= MIN_AVG_ROI
+        and (w.span_seconds / 3600) >= MIN_SPAN_HOURS
     ]
     return sorted(filtered, key=lambda w: w.score, reverse=True)
 
@@ -433,9 +446,11 @@ async def main():
         sys.exit(1)
 
     print(f"\n📊 Config:")
-    print(f"   Min trades: {MIN_TRADES_30D}")
+    print(f"   Min trades: {MIN_TRADES}")
     print(f"   Min win rate: {MIN_WIN_RATE:.0%}")
+    print(f"   Min span: {MIN_SPAN_HOURS}h")
     print(f"   Min avg ROI: {MIN_AVG_ROI:.0%}")
+    print(f"   Bot gap threshold: {BOT_GAP_THRESHOLD_S}s")
     print(f"   Blocks to scan: 30")
 
     # Single pass: scan blocks and collect all swaps
@@ -474,15 +489,18 @@ async def main():
     else:
         display_wallets = wallets[:15] if len(wallets) >= 15 else wallets
 
-    print(f"\n{'='*60}")
-    print(f"{'#':<4} {'Address':<14} {'Score':<8} {'Trades':<8} {'Win%':<8} {'ROI%':<10}")
-    print(f"{'='*60}")
+    print(f"\n{'='*65}")
+    print(f"{'#':<4} {'Address':<16} {'Score':<6} {'Trades':<6} {'Win%':<6} {'Span':<7} {'Type':<7} {'ROI%':<10}")
+    print(f"{'='*65}")
 
     for i, w in enumerate(display_wallets, 1):
         roi_pct = f"{w.avg_roi * 100:.0f}%" if w.avg_roi else "0%"
         win_str = f"{w.win_rate:.0%}" if w.total_trades > 0 else "N/A"
-        print(f"{i:<4} {w.address[:10]}...{w.address[-4:]} "
-              f"{w.score:.3f}   {w.total_trades:<8} {win_str:<8} {roi_pct}")
+        span_h = f"{w.span_seconds/3600:.1f}h" if w.span_seconds else "?"
+        ttype = w.trader_type
+        flag = "⚠️ " if ttype == "BOT" else ""
+        print(f"{i:<4} {w.address[:14]}..{w.address[-4:]} "
+              f"{w.score:.3f}  {w.total_trades:<6} {win_str:<6} {span_h:<7} {flag}{ttype:<7} {roi_pct}")
 
     # Save NEW swaps (append mode) + wallet DB (recalculated from full history)
     save_swaps_csv(truly_new_swaps, f"{DATA_DIR}/swaps.csv")
