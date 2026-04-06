@@ -190,7 +190,7 @@ def aggregate_wallet_metrics(all_swaps: List[ParsedSwap]) -> List[WalletMetrics]
     all_metrics: List[WalletMetrics] = []
 
     for wallet, swaps in wallet_swaps.items():
-        if len(swaps) < 5:
+        if len(swaps) < 2:  # Lowered from 5 to catch winners faster during accumulation
             continue
 
         metrics = calculate_metrics(wallet, swaps)
@@ -327,8 +327,37 @@ def purge_old_entries(filepath: str, max_age_days: int = 30):
     return purged
 
 
+def load_historical_swaps(filepath: str) -> List[ParsedSwap]:
+    """Load all swaps from historical CSV"""
+    if not os.path.exists(filepath):
+        return []
+
+    swaps = []
+    with open(filepath, newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                swap = ParsedSwap(
+                    wallet=row["wallet"],
+                    signature=row["signature"],
+                    dex=row["dex"],
+                    token_mint=row["token_mint"],
+                    action=row["action"],
+                    amount=float(row["amount"]),
+                    amount_sol=float(row["amount_sol"]),
+                    price_sol=float(row["price_sol"]),
+                    slot=int(row["slot"]),
+                    block_time=int(row["block_time"]),
+                    fee=int(row.get("fee", 0)),
+                )
+                swaps.append(swap)
+            except:
+                continue
+    return swaps
+
+
 def save_csv(wallets: List[WalletMetrics], filepath: str):
-    """Save to CSV"""
+    """Save to CSV (overwrite with latest state)"""
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
 
     with open(filepath, "w", newline="") as f:
@@ -359,15 +388,20 @@ def save_csv(wallets: List[WalletMetrics], filepath: str):
 
 
 def save_swaps_csv(swaps: List[ParsedSwap], filepath: str):
-    """Save raw swaps to CSV for future analysis"""
-    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    """Append raw swaps to CSV for historical tracking"""
+    if not swaps:
+        return
 
-    with open(filepath, "w", newline="") as f:
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    file_exists = os.path.exists(filepath)
+
+    with open(filepath, "a", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow([
-            "wallet", "signature", "dex", "token_mint", "action",
-            "amount", "amount_sol", "price_sol", "slot", "block_time"
-        ])
+        if not file_exists:
+            writer.writerow([
+                "wallet", "signature", "dex", "token_mint", "action",
+                "amount", "amount_sol", "price_sol", "slot", "block_time", "fee"
+            ])
 
         for s in swaps:
             writer.writerow([
@@ -381,9 +415,10 @@ def save_swaps_csv(swaps: List[ParsedSwap], filepath: str):
                 round(s.price_sol, 9),
                 s.slot,
                 s.block_time,
+                s.fee,
             ])
 
-    print(f"\n💾 Saved {len(swaps)} swaps to {filepath}")
+    print(f"\n💾 Appended {len(swaps)} swaps to {filepath} (total accumulated)")
 
 
 # ── Main ───────────────────────────────────────────────────────────────
@@ -404,14 +439,28 @@ async def main():
     print(f"   Blocks to scan: 30")
 
     # Single pass: scan blocks and collect all swaps
-    all_swaps = await scan_blocks_and_find_wallets(num_blocks=30)
+    new_swaps = await scan_blocks_and_find_wallets(num_blocks=30)
 
-    if not all_swaps:
+    if not new_swaps:
         print("\n😕 No DEX swaps found in scanned blocks")
         print("   Try scanning more blocks or check API connection")
         sys.exit(1)
 
-    # Aggregate swaps by wallet and calculate metrics
+    # Load historical swaps and merge with new ones
+    hist_path = f"{DATA_DIR}/swaps.csv"
+    historical_swaps = load_historical_swaps(hist_path)
+
+    # Deduplicate by signature (don't double-count same tx)
+    seen_sigs = {s.signature for s in historical_swaps}
+    truly_new_swaps = [s for s in new_swaps if s.signature not in seen_sigs]
+
+    all_swaps = historical_swaps + truly_new_swaps
+
+    print(f"\n📜 Historical swaps loaded: {len(historical_swaps)}")
+    print(f"🆕 New swaps this run: {len(truly_new_swaps)}")
+    print(f"📊 Total swaps for analysis: {len(all_swaps)}")
+
+    # Aggregate swaps by wallet and calculate metrics from ALL history
     wallets = aggregate_wallet_metrics(all_swaps)
 
     # Filter and rank
@@ -419,7 +468,12 @@ async def main():
     print(f"\n🎯 {len(qualified)} wallets passed filters")
 
     # Show ALL wallets found (even without full buy/sell pairs)
-    display_wallets = wallets[:15] if len(wallets) >= 15 else wallets
+    # Prioritize qualified (filtered) wallets in display, fill rest from all wallets
+    if qualified:
+        display_wallets = qualified[:15]
+    else:
+        display_wallets = wallets[:15] if len(wallets) >= 15 else wallets
+
     print(f"\n{'='*60}")
     print(f"{'#':<4} {'Address':<14} {'Score':<8} {'Trades':<8} {'Win%':<8} {'ROI%':<10}")
     print(f"{'='*60}")
@@ -430,8 +484,8 @@ async def main():
         print(f"{i:<4} {w.address[:10]}...{w.address[-4:]} "
               f"{w.score:.3f}   {w.total_trades:<8} {win_str:<8} {roi_pct}")
 
-    # Save raw swaps for future analysis + wallet DB
-    save_swaps_csv(all_swaps, f"{DATA_DIR}/swaps.csv")
+    # Save NEW swaps (append mode) + wallet DB (recalculated from full history)
+    save_swaps_csv(truly_new_swaps, f"{DATA_DIR}/swaps.csv")
     
     if wallets:
         purge_old_entries(WALLET_DB_FILE)

@@ -30,10 +30,12 @@ WALLETS_TO_SCAN = [
 ]
 
 # Min trades in window to be considered
-MIN_TRADES_30D = 3
+# Lowered to 2 for early-stage accumulation — will find winners faster
+MIN_TRADES_30D = 2
 
 # Min win rate to qualify (0.0 - 1.0)
-MIN_WIN_RATE = 0.50
+# 0% means any winner qualifies, tighten as history builds
+MIN_WIN_RATE = 0.0
 
 # Min avg ROI per trade to qualify (0.0 = any profit, 0.1 = 10% avg)
 MIN_AVG_ROI = 0.0

@@ -40,7 +40,7 @@ class ParsedSwap:
     price_sol: float
     slot: int
     block_time: int
-    fee: int
+    fee: int = 0  # default for historical loads
 
 
 def base58_decode(s: str) -> bytes:
