@@ -284,6 +284,16 @@ pre { font-size: 11px; overflow-x: auto; max-height: 200px; }
 .copy-status-dry_run { color: #7d8590; }
 .total-allocated { font-size: 16px; font-weight: 700; color: #58a6ff; }
 .no-wallet { background: #161b22; border: 2px dashed #30363d; border-radius: 6px; padding: 30px; text-align: center; color: #7d8590; }
+.wallet-stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; margin-top: 16px; }
+.wallet-stat { background: #0d1117; border: 1px solid #21262d; border-radius: 6px; padding: 12px; }
+.wallet-stat-value { font-size: 22px; font-weight: 700; }
+.wallet-stat-label { font-size: 10px; color: #7d8590; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px; }
+.pnl-positive { color: #3fb950; }
+.pnl-negative { color: #f85149; }
+.save-changes-btn { background: #1f6feb; color: #fff; border: none; border-radius: 6px; padding: 8px 20px; font-size: 13px; font-weight: 700; cursor: pointer; }
+.save-changes-btn:hover { opacity: 0.85; }
+.save-changes-btn:disabled { background: #30363d; color: #7d8590; cursor: not-allowed; }
+.pending-indicator { display: inline-block; width: 8px; height: 8px; background: #9e6a03; border-radius: 50%; margin-left: 8px; }
 .set-wallet-form { display: flex; gap: 8px; justify-content: center; margin-top: 12px; }
 .set-wallet-form input { background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #e6edf3; padding: 8px 12px; width: 400px; font-size: 13px; }
 .set-wallet-form input:focus { outline: none; border-color: #58a6ff; }
@@ -446,6 +456,16 @@ def build_dashboard_html() -> str:
             f'<span>Allocated: <span class="total-allocated" id="total-allocated">{total_allocated:.3f} SOL</span></span>'
             f'<span>Copying: <span style="color:#3fb950" id="copying-count">{enabled_count} wallets</span></span>'
             f'<span>Trades: <span id="copy-trades-count">{len(copy_trades)}</span></span>'
+            f'</div>'
+            f'<div class="wallet-stats-grid" id="wallet-stats-grid">'
+            f'<div class="wallet-stat"><div class="wallet-stat-value" id="wstat-pnl">—</div><div class="wallet-stat-label">Total PnL (SOL)</div></div>'
+            f'<div class="wallet-stat"><div class="wallet-stat-value" id="wstat-winrate">—</div><div class="wallet-stat-label">Win Rate</div></div>'
+            f'<div class="wallet-stat"><div class="wallet-stat-value" id="wstat-profit-factor">—</div><div class="wallet-stat-label">Profit Factor</div></div>'
+            f'<div class="wallet-stat"><div class="wallet-stat-value" id="wstat-total-trades">—</div><div class="wallet-stat-label">Total Trades</div></div>'
+            f'<div class="wallet-stat"><div class="wallet-stat-value" id="wstat-total-buy">—</div><div class="wallet-stat-label">Total Buys</div></div>'
+            f'<div class="wallet-stat"><div class="wallet-stat-value" id="wstat-total-sell">—</div><div class="wallet-stat-label">Total Sells</div></div>'
+            f'<div class="wallet-stat"><div class="wallet-stat-value" id="wstat-avg-win">—</div><div class="wallet-stat-label">Avg Win (SOL)</div></div>'
+            f'<div class="wallet-stat"><div class="wallet-stat-value" id="wstat-avg-loss">—</div><div class="wallet-stat-label">Avg Loss (SOL)</div></div>'
             f'</div></div>'
         )
     else:
@@ -507,15 +527,18 @@ def build_dashboard_html() -> str:
         + wallet_section + '\n\n'
         '<div class="section">\n'
         '<div class="copy-tab-header">\n'
-        '<h2>📊 WALLETS TO COPY</h2>\n'
+        '<h2>📊 WALLETS TO COPY</h2><span id="pending-indicator" class="pending-indicator" style="display:none"></span>\n'
         '<div style="display:flex;gap:12px;align-items:center">\n'
         '<span class="neutral" style="font-size:12px">Allocated: <strong class="total-allocated" id="total-allocated2">' + f"{total_allocated:.3f} SOL" + '</strong></span>\n'
         '<button class="global-toggle ' + ('on' if global_enabled else 'off') + '" id="global-toggle-btn" style="background:' + global_toggle_bg + '" onclick="toggleGlobal()">' + global_toggle_text + '</button>\n'
         '</div></div>\n'
         '<table><thead><tr><th style="width:20px"></th><th>Address</th><th>Score</th><th>Trades</th><th>Win%</th><th>ROI</th><th>Last Active</th><th>Alloc (SOL)</th><th>Status</th></tr></thead>\n'
         '<tbody id="copy-wallet-body">' + copy_wallet_rows + '</tbody></table>\n'
-        '</div>\n\n'
-        '<div class="section" id="copy-history-section">\n'
+        '<div style="margin-top:12px;display:flex;align-items:center;gap:12px">'
+        '<button id="save-changes-btn" class="save-changes-btn" onclick="savePendingChanges()">Save Changes</button>'
+        '<span id="save-status" class="neutral" style="font-size:12px"></span>'
+        '</div></div>\n\n'
+        '<div class="section" id="copy-history-section">'
         '<h2>📋 COPY TRADE HISTORY <span id="copy-history-count" style="font-weight:normal;color:#7d8590;font-size:12px">(' + str(len(copy_trades)) + ' trades)</span></h2>\n'
         '<table><thead><tr><th>Time</th><th>Action</th><th>Source</th><th>Token</th><th>Amt (orig→copy)</th><th>Status</th><th>Sig</th></tr></thead>\n'
         '<tbody>' + (copy_trade_rows or '<tr><td colspan="7" class="neutral" style="text-align:center;padding:20px">No copy trades yet</td></tr>') + '</tbody></table>\n'
@@ -614,6 +637,104 @@ async def get_wallets():
     wallets = load_wallets_cached()
     sorted_wallets = sorted(wallets, key=lambda w: float(w.get("score", 0)), reverse=True)
     return JSONResponse(sorted_wallets[:50])
+
+
+@app.get("/api/wallet/stats")
+async def get_wallet_stats():
+    """Compute PnL stats from copy_trades.csv for the user's wallet."""
+    copy_config = load_copy_config()
+    user_wallet = copy_config.get("user_wallet", "")
+    if not user_wallet:
+        return JSONResponse({
+            "pnl_sol": 0, "win_rate": 0, "profit_factor": 0,
+            "total_trades": 0, "wins": 0, "losses": 0,
+            "total_buys": 0, "total_sells": 0, "avg_win": 0, "avg_loss": 0
+        })
+    
+    if not COPY_TRADES_FILE.exists():
+        return JSONResponse({
+            "pnl_sol": 0, "win_rate": 0, "profit_factor": 0,
+            "total_trades": 0, "wins": 0, "losses": 0,
+            "total_buys": 0, "total_sells": 0, "avg_win": 0, "avg_loss": 0
+        })
+    
+    try:
+        with open(COPY_TRADES_FILE, newline="") as f:
+            trades = list(csv.DictReader(f))
+    except:
+        return JSONResponse({
+            "pnl_sol": 0, "win_rate": 0, "profit_factor": 0,
+            "total_trades": 0, "wins": 0, "losses": 0,
+            "total_buys": 0, "total_sells": 0, "avg_win": 0, "avg_loss": 0
+        })
+    
+    # Filter to our wallet's trades
+    our_trades = [t for t in trades if t.get("our_wallet") == user_wallet and t.get("status") == "confirmed"]
+    
+    total_trades = len(our_trades)
+    if total_trades == 0:
+        return JSONResponse({
+            "pnl_sol": 0, "win_rate": 0, "profit_factor": 0,
+            "total_trades": 0, "wins": 0, "losses": 0,
+            "total_buys": 0, "total_sells": 0, "avg_win": 0, "avg_loss": 0
+        })
+    
+    wins = 0
+    losses = 0
+    total_pnl = 0.0
+    total_wins = 0.0
+    total_losses = 0.0
+    total_buys = 0
+    total_sells = 0
+    
+    for t in our_trades:
+        action = t.get("action", "")
+        if action == "BUY":
+            total_buys += 1
+        elif action == "SELL":
+            total_sells += 1
+        
+        # PnL = our_price - source_price for sells, source_price - our_price for buys
+        source_price = float(t.get("source_price_sol", 0) or 0)
+        our_price = float(t.get("our_price_sol", 0) or 0)
+        scaled = float(t.get("scaled_amount_sol", 0) or 0)
+        
+        if action == "SELL" and source_price > 0 and our_price > 0:
+            pnl = (source_price - our_price) * scaled
+            total_pnl += pnl
+            if pnl > 0:
+                wins += 1
+                total_wins += pnl
+            else:
+                losses += 1
+                total_losses += abs(pnl)
+        elif action == "BUY" and source_price > 0 and our_price > 0:
+            pnl = (our_price - source_price) * scaled
+            total_pnl += pnl
+            if pnl > 0:
+                wins += 1
+                total_wins += pnl
+            else:
+                losses += 1
+                total_losses += abs(pnl)
+    
+    win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
+    avg_win = (total_wins / wins) if wins > 0 else 0
+    avg_loss = (total_losses / losses) if losses > 0 else 0
+    profit_factor = (total_wins / total_losses) if total_losses > 0 else (total_wins if total_wins > 0 else 0)
+    
+    return JSONResponse({
+        "pnl_sol": round(total_pnl, 6),
+        "win_rate": round(win_rate, 1),
+        "profit_factor": round(profit_factor, 3),
+        "total_trades": total_trades,
+        "wins": wins,
+        "losses": losses,
+        "total_buys": total_buys,
+        "total_sells": total_sells,
+        "avg_win": round(avg_win, 6),
+        "avg_loss": round(avg_loss, 6)
+    })
 
 
 # ── Main ──────────────────────────────────────────────────────────────

@@ -2,6 +2,7 @@
 var activeTab = "discovery";
 var uptimeStart = Date.now();
 var lastStatsTs = 0;
+var pendingChanges = {};  // addr -> {enabled: bool, alloc: float}
 
 // ── Tab Switching ──────────────────────────────────────────────────────
 function switchTab(name) {
@@ -87,6 +88,35 @@ async function refreshStats() {
   updateCopyStatus();
 }
 
+async function refreshWalletStats() {
+  var data = await api("/api/wallet/stats");
+  if (!data) return;
+  
+  var pnlEl = document.getElementById("wstat-pnl");
+  var wrEl = document.getElementById("wstat-winrate");
+  var pfEl = document.getElementById("wstat-profit-factor");
+  var ttEl = document.getElementById("wstat-total-trades");
+  var tbEl = document.getElementById("wstat-total-buy");
+  var tsEl = document.getElementById("wstat-total-sell");
+  var awEl = document.getElementById("wstat-avg-win");
+  var alEl = document.getElementById("wstat-avg-loss");
+  
+  if (pnlEl) {
+    pnlEl.textContent = data.pnl_sol > 0 ? "+" + data.pnl_sol.toFixed(4) : data.pnl_sol.toFixed(4);
+    pnlEl.style.color = data.pnl_sol >= 0 ? "#3fb950" : "#f85149";
+  }
+  if (wrEl) wrEl.textContent = data.win_rate.toFixed(1) + "%";
+  if (pfEl) {
+    pfEl.textContent = data.profit_factor.toFixed(3);
+    pfEl.style.color = data.profit_factor >= 1 ? "#3fb950" : "#f85149";
+  }
+  if (ttEl) ttEl.textContent = data.total_trades;
+  if (tbEl) tbEl.textContent = data.total_buys;
+  if (tsEl) tsEl.textContent = data.total_sells;
+  if (awEl) awEl.textContent = data.avg_win > 0 ? "+" + data.avg_win.toFixed(4) : data.avg_win.toFixed(4);
+  if (alEl) alEl.textContent = data.avg_loss > 0 ? "-" + data.avg_loss.toFixed(4) : data.avg_loss.toFixed(4);
+}
+
 async function refreshCopy() {
   if (activeTab !== "copy") return;
   var config = await api("/api/copy/config");
@@ -167,21 +197,36 @@ document.addEventListener("click", function(e){
     });
 });
 
-// Alloc input — save on blur
+// Alloc input — track pending change on blur
 document.addEventListener("blur", function(e){
   if (!e.target.classList.contains("alloc-input")) return;
   var addr = e.target.dataset.addr;
   var alloc = parseFloat(e.target.value);
   if (isNaN(alloc) || alloc <= 0) return;
-  api("/api/copy/wallet/" + addr + "/alloc", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({alloc:alloc})});
+  var row = e.target.closest("tr");
+  var checkbox = row ? row.querySelector(".wallet-select") : null;
+  var enabled = checkbox ? checkbox.checked : false;
+  markPending(addr, enabled, alloc);
 }, true);
 
-// Wallet checkbox
+// Wallet checkbox — track pending, don't save immediately
 document.addEventListener("change", function(e){
   if (!e.target.classList.contains("wallet-select")) return;
   var addr = e.target.dataset.addr;
-  api("/api/copy/wallet/" + addr + "/toggle", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({alloc:0.01})})
-    .then(function(){ refreshCopy(); });
+  var row = e.target.closest("tr");
+  var allocInput = row ? row.querySelector(".alloc-input") : null;
+  var alloc = allocInput ? parseFloat(allocInput.value) || 0.01 : 0.01;
+  var currentlyEnabled = e.target.checked;
+  
+  // Update the toggle button to match
+  var toggleBtn = row ? row.querySelector(".toggle-btn") : null;
+  if (toggleBtn) {
+    toggleBtn.className = "toggle-btn " + (currentlyEnabled ? "on" : "off");
+    toggleBtn.textContent = currentlyEnabled ? "ON" : "OFF";
+  }
+  row.style.background = currentlyEnabled ? "#1c2d1a" : "";
+  
+  markPending(addr, currentlyEnabled, alloc);
 });
 
 // ── Utils ──────────────────────────────────────────────────────────────
@@ -205,10 +250,48 @@ function updateUptime() {
 }
 setInterval(updateUptime, 1000);
 
+// ── Pending changes tracking ───────────────────────────────────────────
+function markPending(addr, enabled, alloc) {
+  pendingChanges[addr] = { enabled: enabled, alloc: alloc };
+  var indicator = document.getElementById("pending-indicator");
+  if (indicator) indicator.style.display = "inline-block";
+  var btn = document.getElementById("save-changes-btn");
+  if (btn) btn.disabled = false;
+  var status = document.getElementById("save-status");
+  if (status) status.textContent = Object.keys(pendingChanges).length + " unsaved change(s)";
+}
+
+async function savePendingChanges() {
+  var btn = document.getElementById("save-changes-btn");
+  var status = document.getElementById("save-status");
+  if (btn) btn.disabled = true;
+  if (status) status.textContent = "Saving...";
+  
+  var promises = Object.entries(pendingChanges).map(function(e) {
+    var addr = e[0], info = e[1];
+    return api("/api/copy/wallet/" + addr + "/toggle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ alloc: info.alloc })
+    });
+  });
+  
+  await Promise.all(promises);
+  pendingChanges = {};
+  
+  var indicator = document.getElementById("pending-indicator");
+  if (indicator) indicator.style.display = "none";
+  if (btn) btn.disabled = false;
+  if (status) status.textContent = "Saved!";
+  setTimeout(function() { if (status) status.textContent = ""; }, 2000);
+  
+  refreshCopy();
+}
+
 // ── Background polling — no full page reload ────────────────────────────
 function backgroundRefresh() {
   if (activeTab === "discovery") refreshStats();
-  else if (activeTab === "copy") refreshCopy();
+  else if (activeTab === "copy") { refreshCopy(); refreshWalletStats(); }
 }
 setInterval(backgroundRefresh, 10000);
 setTimeout(backgroundRefresh, 3000);
