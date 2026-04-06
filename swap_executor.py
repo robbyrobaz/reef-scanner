@@ -280,25 +280,31 @@ async def execute_swap(
 
 
 # ── Solana CLI keystore compatibility ──────────────────────────────────
-async def load_solana_keypair() -> Optional[Keypair]:
+async def load_solana_keypair(keypair_path: str = "") -> Optional[Keypair]:
     """
-    Try to load keypair from common locations.
-    Priority: KEYPAIR_FILE env > DATA_DIR/keypair.json > ~/.config/solana/id.json
+    Load keypair from a specific path, or fall back to common locations.
+    Priority: explicit path > KEYPAIR_FILE env > DATA_DIR/keypair.json > ~/.config/solana/id.json
     """
-    paths_to_try = [
+    paths_to_try = []
+    if keypair_path:
+        paths_to_try.append(keypair_path)
+    paths_to_try.extend([
         KEYPAIR_FILE,
         f"{DATA_DIR}/keypair.json",
         os.path.expanduser("~/.config/solana/id.json"),
-    ]
+    ])
     
+    seen = set()
     for path in paths_to_try:
+        if path in seen or not path:
+            continue
+        seen.add(path)
         kp = load_keypair(path)
         if kp:
             print(f"    🔑 Loaded keypair from {path}")
             return kp
     
-    print(f"    ⚠️  No keypair found. Tried: {paths_to_try}")
-    print(f"    💡 Set KEYPAIR_FILE env var or place keypair at {DATA_DIR}/keypair.json")
+    print(f"    ⚠️  No keypair found.")
     return None
 
 

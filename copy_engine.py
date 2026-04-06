@@ -368,8 +368,17 @@ async def run_engine():
     print("🏄 Reef Copy Trading Engine")
     print("=" * 60)
     
-    DRY_RUN = "--live" not in sys.argv
-    print(f"   Mode: {'🐸 DRY RUN' if DRY_RUN else '🔴 LIVE — REAL TRADES'}")
+    # Load config first to get trade_mode
+    config = load_copy_config()
+    trade_mode = config.get("trade_mode", "paper")
+    
+    # --live flag overrides config; otherwise use config
+    cli_live = "--live" in sys.argv
+    DRY_RUN = not cli_live and trade_mode != "live"
+    
+    print(f"   Mode: {'🐸 DRY RUN (PAPER)' if DRY_RUN else '🔴 LIVE — REAL TRADES'}")
+    if cli_live:
+        print(f"   (CLI --live flag overrides config trade_mode={trade_mode})")
     print(f"   Poll interval: {COPY_ENGINE_INTERVAL_S}s")
     print()
 
@@ -377,14 +386,16 @@ async def run_engine():
     POSITIONS = load_positions()
     print(f"   Loaded {len(POSITIONS)} positions from disk")
 
-    # Try to load keypair (even in DRY_RUN, we load to verify it exists)
-    KEYPAIR_LOADED = await load_solana_keypair()
+    # Try to load keypair from config path or default
+    keypair_path = config.get("keypair_path", str(DATA_DIR / "keypair.json"))
+    KEYPAIR_LOADED = await load_solana_keypair(keypair_path)
     if KEYPAIR_LOADED:
-        print(f"   Keypair: {KEYPAIR_LOADED.pubkey()}")
+        print(f"   Keypair: {KEYPAIR_LOADED.pubkey()} ({keypair_path})")
     else:
-        print(f"   ⚠️  No keypair — add KEYPAIR_FILE or run with --live to enable real trades")
+        print(f"   ⚠️  No keypair at {keypair_path}")
+        if not DRY_RUN:
+            print(f"   ⚠️  Cannot run LIVE without a keypair — downgrading to PAPER")
 
-    config = load_copy_config()
     if not config.user_wallet:
         print("   ⚠️  No user wallet set!")
     else:

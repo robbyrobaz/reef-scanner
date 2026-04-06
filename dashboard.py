@@ -299,6 +299,21 @@ pre { font-size: 11px; overflow-x: auto; max-height: 200px; }
 .pnl-positive { color: #3fb950; }
 .pnl-negative { color: #f85149; }
 .save-changes-btn { background: #1f6feb; color: #fff; border: none; border-radius: 6px; padding: 8px 20px; font-size: 13px; font-weight: 700; cursor: pointer; }
+.mode-toggle-wrap { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.mode-label { font-size: 11px; color: #7d8590; font-weight: 600; text-transform: uppercase; }
+.mode-toggle { position: relative; width: 52px; height: 26px; border-radius: 13px; cursor: pointer; border: none; transition: background 0.2s; }
+.mode-toggle.paper { background: #30363d; }
+.mode-toggle.live { background: #da3633; }
+.mode-toggle::after { content: ''; position: absolute; top: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; transition: left 0.2s; }
+.mode-toggle.paper::after { left: 3px; }
+.mode-toggle.live::after { left: 29px; }
+.mode-badge { font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px; text-transform: uppercase; }
+.mode-badge.paper { background: #30363d; color: #7d8590; }
+.mode-badge.live { background: #4f1d1d; color: #f85149; }
+.keypair-warning { background: #2d1f00; border: 1px solid #9e6a03; border-radius: 6px; padding: 10px 14px; font-size: 12px; color: #d29922; margin-top: 10px; }
+.keypair-ok { background: #0d2119; border: 1px solid #238636; border-radius: 6px; padding: 10px 14px; font-size: 12px; color: #3fb950; margin-top: 10px; }
+.keypair-upload { margin-top: 8px; }
+.keypair-upload input[type=file] { font-size: 12px; color: #c9d1d9; }
 .save-changes-btn:hover { opacity: 0.85; }
 .save-changes-btn:disabled { background: #30363d; color: #7d8590; cursor: not-allowed; }
 .pending-indicator { display: inline-block; width: 8px; height: 8px; background: #9e6a03; border-radius: 50%; margin-left: 8px; }
@@ -336,6 +351,9 @@ def build_dashboard_html() -> str:
 
     user_wallet = copy_config.get("user_wallet", "")
     global_enabled = copy_config.get("global_enabled", False)
+    trade_mode = copy_config.get("trade_mode", "paper")  # "paper" or "live"
+    keypair_path = copy_config.get("keypair_path", "")
+    has_keypair = bool(keypair_path and os.path.exists(keypair_path))
     copies = copy_config.get("copies", {})
     total_allocated = sum(e.get("alloc_sol", 0) for e in copies.values() if e.get("enabled"))
     enabled_count = sum(1 for e in copies.values() if e.get("enabled"))
@@ -501,18 +519,26 @@ def build_dashboard_html() -> str:
         wallet_section = (
             '<div class="no-wallet">'
             '<h2 style="margin:0 0 8px">👛 Connect Your Wallet</h2>'
-            '<p>Paste your Solana wallet address to enable copy trading</p>'
-            '<div style="display:flex;gap:8px;margin-bottom:8px">'
-            '<input type="text" id="new-wallet-input" placeholder="Solana address (GPu... etc)..." style="flex:1;background:#0d1117;border:1px solid #30363d;color:#c9d1d9;border-radius:6px;padding:8px 12px;font-size:13px">'
-            '<button class="connect-btn" onclick="connectPhantomWallet()">🔮 Connect</button>'
+            '<p>Click the <strong>"Connect Phantom"</strong> button above to link your wallet.</p>'
+            '<p style="font-size:12px;color:#7d8590;margin-top:8px">You\'ll be asked to sign a message with Phantom to verify ownership.<br>Your keypair for trade execution can be uploaded separately.</p>'
+            '<button class="connect-btn" style="margin-top:12px" onclick="connectPhantomWallet()">🔮 Connect Phantom</button>'
             '</div>'
-            '<p class="neutral" style="font-size:11px;margin-top:6px">Your wallet is only stored locally. We never send your keys anywhere.</p></div>'
         )
 
     global_toggle_bg = "#da3633" if global_enabled else "#238636"
     global_toggle_text = "⏹ STOP ALL" if global_enabled else "▶️ START ALL"
     copy_badge_class = "live" if global_enabled else "warning"
     copy_badge_text = "COPY ACTIVE" if global_enabled else "COPY OFF"
+
+    # Build keypair status and upload UI
+    if trade_mode == "live":
+        if has_keypair:
+            keypair_status = '<div class="keypair-ok">&#10004; Keypair loaded: ' + keypair_path.split("/")[-1] + '</div>'
+        else:
+            keypair_status = '<div class="keypair-warning">&#9888; No keypair set for live trading. Upload below or set KEYPAIR_FILE.</div>'
+    else:
+        keypair_status = '<div class="keypair-ok" style="color:#7d8590">&#10004; Paper mode — no keypair needed</div>'
+    keypair_upload = '<div class="keypair-upload"><input type="file" id="keypair-file" accept=".json" style="font-size:12px;color:#c9d1d9"><button class="save-changes-btn" style="padding:4px 12px;font-size:11px;margin-left:6px" onclick="uploadKeypair()">Upload</button></div>'
 
     # Assemble HTML without f-string inside script block
     html = (
@@ -523,7 +549,12 @@ def build_dashboard_html() -> str:
         '</head>\n<body>\n'
         '<div class="header">\n'
         '<h1>🏄 REEF SCANNER <span class="tag ' + copy_badge_class + '" id="copy-status-badge">' + copy_badge_text + '</span></h1>\n'
-        '<div id="wallet-connect-area">' + (('<span class="connected-badge" id="connected-wallet">' + user_wallet[:8] + '...</span>') if user_wallet else '<button class="connect-btn" id="connect-wallet-btn" onclick="connectPhantomWallet()">🔮 Connect Phantom</button>') + '</div>\n'
+        '<div id="wallet-connect-area">'
+        '<button class="connect-btn" id="connect-wallet-btn" onclick="connectPhantomWallet()">'
+        + ('🔗 Change Wallet' if user_wallet else '🔮 Connect Phantom') +
+        '</button>'
+        + (('<span id="connected-wallet" class="connected-badge">' + user_wallet[:8] + '...</span>') if user_wallet else '') +
+        '</div>\n'
         '<p>Solana DEX Wallet Discovery + Copy Trading</p>\n'
         '<div class="status-row">\n'
         '<div class="status-item"><span class="live-dot"></span>Last scan: <span id="last-scan">' + (stats['last_scan'] or 'Never') + '</span></div>\n'
@@ -559,17 +590,28 @@ def build_dashboard_html() -> str:
         '<div class="section">\n'
         '<div class="copy-tab-header">\n'
         '<h2>📊 WALLETS TO COPY</h2><span id="pending-indicator" class="pending-indicator" style="display:none"></span>\n'
-        '<div style="display:flex;gap:12px;align-items:center">\n'
+        '<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">\n'
         '<span class="neutral" style="font-size:12px">Allocated: <strong class="total-allocated" id="total-allocated2">' + f"{total_allocated:.3f} SOL" + '</strong></span>\n'
         '<button class="global-toggle ' + ('on' if global_enabled else 'off') + '" id="global-toggle-btn" style="background:' + global_toggle_bg + '" onclick="toggleGlobal()">' + global_toggle_text + '</button>\n'
-        '</div></div>\n'
+        '<div class="mode-toggle-wrap">\n'
+        '<span class="mode-label">Mode:</span>\n'
+        '<span class="mode-badge ' + trade_mode + '" id="mode-badge">' + trade_mode.upper() + '</span>\n'
+        '<button class="mode-toggle ' + trade_mode + '" id="mode-toggle-btn" onclick="toggleMode()"></button>\n'
+        '</div>\n'
+        '</div>\n'
+        '</div>\n\n'
+        '<div id="keypair-section">\n'
+        + keypair_status + '\n'
+        + keypair_upload + '\n'
+        '</div>\n\n'
         '<table><thead><tr><th style="width:20px"></th><th>Address</th><th>Score</th><th>Trades</th><th>Win%</th><th>ROI</th><th>Last Active</th><th>Alloc (SOL)</th><th>Status</th></tr></thead>\n'
         '<tbody id="copy-wallet-body">' + copy_wallet_rows + '</tbody></table>\n'
-        '<div style="margin-top:12px;display:flex;align-items:center;gap:12px">'
-        '<button id="save-changes-btn" class="save-changes-btn" onclick="savePendingChanges()">Save Changes</button>'
-        '<span id="save-status" class="neutral" style="font-size:12px"></span>'
-        '</div></div>\n\n'
-        '<div class="section" id="copy-history-section">'
+        '<div style="margin-top:12px;display:flex;align-items:center;gap:12px">\n'
+        '<button id="save-changes-btn" class="save-changes-btn" onclick="savePendingChanges()">Save Changes</button>\n'
+        '<span id="save-status" class="neutral" style="font-size:12px"></span>\n'
+        '</div>\n'
+        '</div>\n\n'
+        '<div class="section" id="copy-history-section">\n'
         '<h2>📋 COPY TRADE HISTORY <span id="copy-history-count" style="font-weight:normal;color:#7d8590;font-size:12px">(' + str(len(copy_trades)) + ' trades)</span></h2>\n'
         '<table><thead><tr><th>Time</th><th>Action</th><th>Source</th><th>Token</th><th>Amt (orig→copy)</th><th>Status</th><th>Sig</th></tr></thead>\n'
         '<tbody>' + (copy_trade_rows or '<tr><td colspan="7" class="neutral" style="text-align:center;padding:20px">No copy trades yet</td></tr>') + '</tbody></table>\n'
@@ -579,8 +621,7 @@ def build_dashboard_html() -> str:
         'Reef Scanner • <span class="live-dot"></span>Live updates every 10s •\n'
         '<a href="https://github.com/robbyrobaz/reef-scanner" target="_blank" style="color:#58a6ff">GitHub</a>\n'
         '</div>\n\n'
-                '<script src="/static/dashboard.js"></script>\n'
-
+        '<script src="/static/dashboard.js"></script>\n'
         '</body>\n</html>'
     )
     return html
@@ -661,6 +702,78 @@ async def toggle_global():
     config["global_enabled"] = not config["global_enabled"]
     save_copy_config(config)
     return {"ok": True, "global_enabled": config["global_enabled"]}
+
+
+@app.post("/api/trade/mode", status_code=200)
+async def set_trade_mode(request: Request):
+    """
+    Set trade mode: 'paper' (dry_run) or 'live' (real money).
+    Also configure the keypair file path for live mode.
+    Body: { "mode": "paper"|"live", "keypair_path": "..." }
+    """
+    body = await request.json()
+    mode = body.get("mode", "paper")
+    keypair_path = body.get("keypair_path", "")
+    
+    config = load_copy_config()
+    config["trade_mode"] = mode  # "paper" or "live"
+    if keypair_path:
+        config["keypair_path"] = keypair_path
+    save_copy_config(config)
+    
+    return {"ok": True, "mode": mode, "keypair_path": config.get("keypair_path", "")}
+
+
+@app.post("/api/wallet/disconnect", status_code=200)
+async def disconnect_wallet():
+    """Clear the connected wallet."""
+    config = load_copy_config()
+    config["user_wallet"] = ""
+    save_copy_config(config)
+    return {"ok": True}
+
+
+@app.post("/api/keypair/upload")
+async def upload_keypair(request: Request):
+    """
+    Upload a keypair JSON file for live trading.
+    The file should be a JSON array of uint8 bytes (Solana keypair format).
+    """
+    try:
+        # Read the uploaded file
+        form = await request.form()
+        file = form.get("file")
+        if not file:
+            return JSONResponse({"ok": False, "error": "No file provided"}, status_code=400)
+        
+        contents = await file.read()
+        
+        # Validate it's a list of integers (keypair bytes)
+        import json as _json
+        try:
+            data = _json.loads(contents)
+            if not isinstance(data, list) or len(data) < 64:
+                return JSONResponse({"ok": False, "error": "Invalid keypair format"}, status_code=400)
+            # Just check it's mostly numeric bytes
+            for b in data[:64]:
+                if not isinstance(b, (int, float)) or b < 0 or b > 255:
+                    return JSONResponse({"ok": False, "error": "Invalid keypair bytes"}, status_code=400)
+        except (_json.JSONDecodeError, ValueError) as e:
+            return JSONResponse({"ok": False, "error": f"Invalid JSON: {e}"}, status_code=400)
+        
+        # Save to data/keypair.json
+        keypair_path = DATA_DIR / "keypair.json"
+        with open(keypair_path, "wb") as f:
+            f.write(contents)
+        
+        # Update config
+        config = load_copy_config()
+        config["keypair_path"] = str(keypair_path)
+        save_copy_config(config)
+        
+        return JSONResponse({"ok": True, "path": str(keypair_path)})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
 
 @app.get("/api/wallets")

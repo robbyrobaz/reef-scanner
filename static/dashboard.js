@@ -16,35 +16,44 @@ function switchTab(name) {
 
 // ── Phantom Wallet Connect ─────────────────────────────────────────────
 async function connectPhantomWallet() {
-  var input = document.getElementById('new-wallet-input');
-  var addr = input ? input.value.trim() : '';
-  
-  // If Phantom is available, try to connect directly
   var phantom = window.phantom && window.phantom.solana;
-  if (phantom && phantom.isConnected && phantom.publicKey) {
-    addr = phantom.publicKey.toString();
-  }
   
-  if (!addr) {
-    alert('Please enter your Solana wallet address');
-    return;
-  }
-  
-  // Generate a challenge
-  var challenge = 'Reef Scanner copy trading auth: ' + Date.now() + '|' + Math.random().toString(36).slice(2);
-  pendingChallenge = challenge;
-  
-  // Try to sign with Phantom if available
-  if (phantom && phantom.isPhantom) {
+  // Try to connect via Phantom if available and not already connected
+  if (phantom) {
     try {
-      var messageBytes = new TextEncoder().encode(challenge);
-      var sig = await phantom.signMessage(messageBytes, 'utf8');
-      if (sig && sig.signature) {
-        var sigB64 = btoa(String.fromCharCode.apply(null, Array.from(sig.signature)));
-        var res = await api('/api/wallet/verify', {
+      if (!phantom.isConnected) {
+        var resp = await phantom.connect();
+        // phantom.connect() returns undefined on success, throws on reject
+      }
+      if (phantom.publicKey) {
+        var addr = phantom.publicKey.toString();
+        var challenge = 'Reef Scanner copy trading auth: ' + Date.now() + '|' + Math.random().toString(36).slice(2);
+        
+        try {
+          var messageBytes = new TextEncoder().encode(challenge);
+          var sigResp = await phantom.signMessage(messageBytes, 'utf8');
+          if (sigResp && sigResp.signature) {
+            var sigArray = Array.from(sigResp.signature);
+            var sigB64 = btoa(String.fromCharCode.apply(null, sigArray));
+            var res = await api('/api/wallet/verify', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ address: addr, message: challenge, signature: sigB64 })
+            });
+            if (res && res.ok) {
+              location.reload();
+              return;
+            }
+          }
+        } catch (e) {
+          console.log('Phantom sign message failed (ok if denied):', e.message || e);
+        }
+        
+        // Phantom connected but sign failed/denied — still use address-only verify
+        var res = await api('/api/copy/wallet', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ address: addr, message: challenge, signature: sigB64 })
+          body: JSON.stringify({ address: addr })
         });
         if (res && res.ok) {
           location.reload();
@@ -52,20 +61,80 @@ async function connectPhantomWallet() {
         }
       }
     } catch (e) {
-      console.log('Phantom sign failed, trying address-only verify:', e);
+      console.log('Phantom connect failed (user probably rejected):', e.message || e);
+      // Fall through to manual entry
     }
   }
   
-  // Fallback: just set the wallet address directly (trust the user)
-  var res = await api('/api/copy/wallet', {
+  // Fallback: manual address entry via prompt
+  var addr = prompt('Enter your Solana wallet address:');
+  if (addr && addr.trim()) {
+    addr = addr.trim();
+    var res = await api('/api/copy/wallet', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ address: addr })
+    });
+    if (res && res.ok) {
+      location.reload();
+    } else {
+      alert('Failed to set wallet');
+    }
+  }
+}
+
+// ── Trade Mode Toggle ──────────────────────────────────────────────────
+async function toggleMode() {
+  var btn = document.getElementById('mode-toggle-btn');
+  var badge = document.getElementById('mode-badge');
+  var currentMode = badge ? badge.textContent.toLowerCase() : 'paper';
+  var newMode = currentMode === 'paper' ? 'live' : 'paper';
+  
+  if (newMode === 'live') {
+    var confirmed = confirm('Switch to LIVE trading? This will execute REAL swaps with your SOL. Make sure you have a keypair uploaded!');
+    if (!confirmed) return;
+  }
+  
+  var res = await api('/api/trade/mode', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ address: addr })
+    body: JSON.stringify({ mode: newMode })
   });
+  
   if (res && res.ok) {
+    // Update UI
+    if (btn) { btn.className = 'mode-toggle ' + newMode; }
+    if (badge) { badge.textContent = newMode.toUpperCase(); badge.className = 'mode-badge ' + newMode; }
+    
+    // Reload to refresh keypair status
     location.reload();
   } else {
-    alert('Failed to set wallet: ' + (res && res.error || 'unknown error'));
+    alert('Failed to update mode: ' + (res && res.error || 'unknown'));
+  }
+}
+
+// ── Keypair Upload ─────────────────────────────────────────────────────
+async function uploadKeypair() {
+  var fileInput = document.getElementById('keypair-file');
+  var file = fileInput && fileInput.files && fileInput.files[0];
+  if (!file) {
+    alert('Select a keypair JSON file first');
+    return;
+  }
+  
+  var formData = new FormData();
+  formData.append('file', file);
+  
+  var res = await fetch('/api/keypair/upload', {
+    method: 'POST',
+    body: formData
+  }).then(function(r) { return r.json(); });
+  
+  if (res && res.ok) {
+    alert('Keypair uploaded! Mode is now LIVE.');
+    location.reload();
+  } else {
+    alert('Upload failed: ' + (res && res.error || 'unknown error'));
   }
 }
 
