@@ -38,8 +38,8 @@ def load_wallets() -> List[Dict]:
     return wallets
 
 
-def load_swaps(limit: int = 50) -> List[Dict]:
-    """Load recent swaps from CSV"""
+def load_swaps(limit: Optional[int] = 50) -> List[Dict]:
+    """Load swaps from CSV. If limit is None, load all."""
     if not SWAPS_CSV.exists():
         return []
     swaps = []
@@ -47,6 +47,8 @@ def load_swaps(limit: int = 50) -> List[Dict]:
         reader = csv.DictReader(f)
         for row in reader:
             swaps.append(row)
+    if limit is None:
+        return swaps
     return swaps[-limit:]
 
 
@@ -62,34 +64,37 @@ def get_last_cron_log() -> Optional[str]:
 def get_stats() -> Dict:
     """Calculate dashboard stats"""
     wallets = load_wallets()
-    swaps = load_swaps(limit=1000)
+
+    # Load ALL swaps for stats (not capped)
+    all_swaps = load_swaps(limit=None)  # None = load everything
+    swaps_for_display = all_swaps[-50:]  # last 50 for recent activity table
 
     # Wallet stats
     total_wallets = len(wallets)
     qualified_wallets = len([w for w in wallets if float(w.get("score", 0)) > 0.5])
 
-    # Swap stats
-    total_swaps = len(swaps)
-    buys = len([s for s in swaps if s.get("action") == "BUY"])
-    sells = len([s for s in swaps if s.get("action") == "SELL"])
+    # Swap stats — from ALL swaps
+    total_swaps = len(all_swaps)
+    buys = len([s for s in all_swaps if s.get("action") == "BUY"])
+    sells = len([s for s in all_swaps if s.get("action") == "SELL"])
 
-    # DEX breakdown
+    # DEX breakdown — from ALL swaps
     dex_counts: Dict[str, int] = {}
-    for s in swaps:
+    for s in all_swaps:
         dex = s.get("dex", "unknown")
         dex_counts[dex] = dex_counts.get(dex, 0) + 1
 
     # Top wallets by score
     top_wallets = sorted(wallets, key=lambda w: float(w.get("score", 0)), reverse=True)[:10]
 
-    # Recent activity (last 10 swaps)
-    recent_swaps = list(reversed(swaps[-10:]))
+    # Recent activity (last 10 from all swaps)
+    recent_swaps = list(reversed(all_swaps[-10:]))
 
     # Time since last scan
     last_scan = None
-    if swaps:
+    if all_swaps:
         try:
-            last_swap = swaps[-1]
+            last_swap = all_swaps[-1]
             ts = int(last_swap.get("block_time", 0))
             if ts:
                 last_scan = datetime.fromtimestamp(ts, tz=timezone.utc)
@@ -416,7 +421,7 @@ async def dashboard(request: Request):
 # ── Main ──────────────────────────────────────────────────────────────
 
 def main():
-    port = 8899
+    port = 8891
     print(f"Starting Reef Dashboard on http://0.0.0.0:{port}")
     print(f"Data dir: {DATA_DIR}")
     print(f"Wallets: {WALLETS_CSV}")
