@@ -10,6 +10,9 @@ venv/
 data/
 logs/
 
+# Cron logs
+cron/*.log
+
 # OS
 .DS_Store
 *.swp
