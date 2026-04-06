@@ -1,0 +1,214 @@
+// ── State ─────────────────────────────────────────────────────────────
+var activeTab = "discovery";
+var uptimeStart = Date.now();
+var lastStatsTs = 0;
+
+// ── Tab Switching ──────────────────────────────────────────────────────
+function switchTab(name) {
+  activeTab = name;
+  document.querySelectorAll(".tab").forEach(function(t){ t.classList.remove("active"); });
+  document.querySelectorAll(".tab-content").forEach(function(c){ c.classList.remove("active"); });
+  document.getElementById("tab-" + name).classList.add("active");
+  document.getElementById("content-" + name).classList.add("active");
+}
+
+// ── REST ───────────────────────────────────────────────────────────────
+function api(url, opts) {
+  return fetch(url, opts).then(function(r){ return r.ok ? r.json() : null; }).catch(function(){ return null; });
+}
+
+// ── Partial DOM updates ────────────────────────────────────────────────
+function rebuildSwaps(swaps) {
+  var tbody = document.getElementById("swap-table-body");
+  if (!swaps || !swaps.length) { tbody.innerHTML = '<tr><td colspan="7" class="neutral">No swaps yet</td></tr>'; return; }
+  var html = swaps.slice().reverse().map(function(s){
+    var sig = s.signature || "";
+    return "<tr><td class=\"neutral\">" + fmtTs(s.block_time) + "</td>" +
+      "<td><span class=\"action " + s.action + "\">" + s.action + "</span></td>" +
+      "<td class=\"mono\">" + (s.token_mint||"").slice(0,12) + "</td>" +
+      "<td>" + (Number(s.amount)||0).toFixed(2) + "</td>" +
+      "<td>" + (Number(s.amount_sol)||0).toFixed(4) + " SOL</td>" +
+      "<td><span class=\"dex-badge\">" + (s.dex||"") + "</span></td>" +
+      "<td class=\"addr\"><a href=\"https://solscan.io/tx/" + sig + "\" target=\"_blank\" style=\"color:#58a6ff\">" + shorten(sig,6) + "</a></td></tr>";
+  }).join("");
+  tbody.innerHTML = html;
+}
+
+function rebuildWallets(wallets) {
+  var tbody = document.getElementById("wallet-table-body");
+  if (!wallets || !wallets.length) { tbody.innerHTML = '<tr><td colspan="7" class="neutral">No wallets yet</td></tr>'; return; }
+  var html = wallets.map(function(w){
+    var score = Number(w.score||0), roi = Number(w.avg_roi||0)*100;
+    var addr = w.address||"";
+    var scoreColor = score > 0.8 ? "#3fb950" : score > 0.5 ? "#58a6ff" : "#7d8590";
+    var roiColor = roi > 0 ? "#3fb950" : roi < 0 ? "#f85149" : "#7d8590";
+    return "<tr><td class=\"addr\"><a href=\"https://solscan.io/account/" + addr + "\" target=\"_blank\" style=\"color:#58a6ff;text-decoration:none\">" + shorten(addr,8) + "</a></td>" +
+      "<td style=\"color:" + scoreColor + ";font-weight:600\">" + score.toFixed(3) + "</td>" +
+      "<td>" + (w.total_trades||"0") + "</td>" +
+      "<td>" + (w.win_rate||"N/A") + "</td>" +
+      "<td style=\"color:" + roiColor + "\">" + roi.toFixed(0) + "%</td>" +
+      "<td class=\"neutral\">" + ((w.favorite_token||"")||"").slice(0,12) + "</td>" +
+      "<td class=\"neutral\">" + fmtAge(w.last_active||"N/A") + "</td></tr>";
+  }).join("");
+  tbody.innerHTML = html;
+}
+
+function rebuildDex(dexCounts, totalSwaps) {
+  var table = document.getElementById("dex-table");
+  var rows = Object.entries(dexCounts||{}).sort(function(a,b){ return b[1]-a[1]; })
+    .map(function(e){ var pct = totalSwaps ? (e[1]/totalSwaps*100).toFixed(1) : "0.0"; return "<tr><td><span class=\"dex-badge\">" + e[0] + "</span></td><td>" + e[1] + "</td><td class=\"neutral\">" + pct + "%</td></tr>"; })
+    .join("");
+  table.innerHTML = "<tr><th>DEX</th><th>Swaps</th><th>Share</th></tr>" + rows;
+}
+
+// ── Refresh functions ─────────────────────────────────────────────────
+async function refreshStats() {
+  var data = await api("/api/stats");
+  if (!data) return;
+  if (data.computed_at === lastStatsTs) return;
+  lastStatsTs = data.computed_at;
+  document.getElementById("stat-swaps").textContent = Number(data.total_swaps).toLocaleString();
+  document.getElementById("stat-swaps2").textContent = Number(data.total_swaps).toLocaleString();
+  document.getElementById("stat-wallets").textContent = Number(data.total_wallets).toLocaleString();
+  document.getElementById("stat-wallets2").textContent = Number(data.total_wallets).toLocaleString();
+  document.getElementById("stat-buys").textContent = Number(data.buys).toLocaleString();
+  document.getElementById("stat-sells").textContent = Number(data.sells).toLocaleString();
+  document.getElementById("stat-qualified").textContent = data.qualified_wallets;
+  if (data.last_scan) {
+    var diff = (Date.now()/1000 - new Date(data.last_scan).getTime()/1000);
+    var ago = diff < 60 ? Math.floor(diff) + "s ago" : diff < 3600 ? Math.floor(diff/60) + "m ago" : data.last_scan.split("T")[1].slice(0,5);
+    document.getElementById("last-scan").textContent = ago;
+  }
+  if (activeTab === "discovery") {
+    rebuildSwaps(data.recent_swaps);
+    rebuildWallets(data.top_wallets);
+  }
+  rebuildDex(data.dex_counts, data.total_swaps);
+  updateCopyStatus();
+}
+
+async function refreshCopy() {
+  if (activeTab !== "copy") return;
+  var config = await api("/api/copy/config");
+  if (!config) return;
+  var totalAlloc = Object.values(config.copies||{}).filter(function(e){ return e.enabled; }).reduce(function(s,e){ return s+(e.alloc_sol||0); }, 0);
+  var enabledCount = Object.values(config.copies||{}).filter(function(e){ return e.enabled; }).length;
+  document.getElementById("total-allocated").textContent = totalAlloc.toFixed(3) + " SOL";
+  document.getElementById("total-allocated2").textContent = totalAlloc.toFixed(3) + " SOL";
+  document.getElementById("copying-count").textContent = enabledCount + " wallets";
+  var btn = document.getElementById("global-toggle-btn");
+  if (btn) { btn.className = "global-toggle " + (config.global_enabled ? "on" : "off"); btn.style.background = config.global_enabled ? "#da3633" : "#238636"; btn.textContent = config.global_enabled ? "⏹ STOP ALL" : "▶ START ALL"; }
+  var badge = document.getElementById("copy-status-badge");
+  if (badge) { badge.textContent = config.global_enabled ? "COPY ACTIVE" : "COPY OFF"; badge.className = "tag " + (config.global_enabled ? "live" : "warning"); }
+  Object.entries(config.copies||{}).forEach(function(e){
+    var addr = e[0], info = e[1];
+    var row = document.querySelector('[data-copy-addr="' + addr + '"]');
+    if (!row) return;
+    var b = row.querySelector(".toggle-btn");
+    if (b) { b.className = "toggle-btn " + (info.enabled ? "on" : "off"); b.textContent = info.enabled ? "ON" : "OFF"; }
+    var inp = row.querySelector(".alloc-input");
+    if (inp) inp.value = (info.alloc_sol||0.01).toFixed(3);
+    row.style.background = info.enabled ? "#1c2d1a" : "";
+  });
+  var trades = await api("/api/copy/trades");
+  if (trades && trades.length > 0) {
+    var tbody = document.querySelector("#copy-history-section table tbody");
+    if (tbody) {
+      tbody.innerHTML = trades.map(function(t){
+        return "<tr class=\"copy-trade-row\"><td class=\"neutral\">" + fmtTs(t.timestamp) + "</td>" +
+          "<td><span class=\"action " + t.action + "\">" + t.action + "</span></td>" +
+          "<td class=\"addr\" style=\"font-size:11px\">" + shorten(t.source_wallet||"",6) + "</td>" +
+          "<td>" + (t.token_mint||"").slice(0,12) + "</td>" +
+          "<td>" + Number(t.amount_sol||0).toFixed(4) + " \u2192 " + Number(t.scaled_amount_sol||0).toFixed(4) + "</td>" +
+          "<td class=\"copy-status-" + (t.status||"pending") + "\">" + (t.status||"pending").toUpperCase() + "</td>" +
+          "<td class=\"addr\" style=\"font-size:11px\"><a href=\"https://solscan.io/tx/" + (t.source_sig||"") + "\" style=\"color:#58a6ff\">" + shorten(t.source_sig||"",6) + "</a></td></tr>";
+      }).join("");
+    }
+    document.getElementById("copy-history-count").textContent = "(" + trades.length + " trades)";
+  }
+}
+
+function updateCopyStatus() {
+  api("/api/copy/config").then(function(config){
+    if (!config) return;
+    var badge = document.getElementById("copy-status-badge");
+    if (badge) { badge.textContent = config.global_enabled ? "COPY ACTIVE" : "COPY OFF"; badge.className = "tag " + (config.global_enabled ? "live" : "warning"); }
+  });
+}
+
+// ── Actions ────────────────────────────────────────────────────────────
+async function setWallet() {
+  var addr = document.getElementById("new-wallet-input").value.trim();
+  if (!addr) return;
+  var res = await api("/api/copy/wallet", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({address:addr})});
+  if (res && res.ok) location.reload();
+}
+
+async function toggleGlobal() {
+  await api("/api/copy/global-toggle", {method:"POST"});
+  updateCopyStatus();
+  refreshCopy();
+}
+
+// Event delegation for toggle buttons
+document.addEventListener("click", function(e){
+  var btn = e.target.closest(".toggle-btn");
+  if (!btn) return;
+  e.stopPropagation();
+  var addr = btn.dataset.addr;
+  api("/api/copy/wallet/" + addr + "/toggle", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({alloc:0.01})})
+    .then(function(res){
+      if (!res) return;
+      btn.className = "toggle-btn " + (res.enabled ? "on" : "off");
+      btn.textContent = res.enabled ? "ON" : "OFF";
+      var row = btn.closest("tr");
+      if (row) row.style.background = res.enabled ? "#1c2d1a" : "";
+      refreshCopy();
+    });
+});
+
+// Alloc input — save on blur
+document.addEventListener("blur", function(e){
+  if (!e.target.classList.contains("alloc-input")) return;
+  var addr = e.target.dataset.addr;
+  var alloc = parseFloat(e.target.value);
+  if (isNaN(alloc) || alloc <= 0) return;
+  api("/api/copy/wallet/" + addr + "/alloc", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({alloc:alloc})});
+}, true);
+
+// Wallet checkbox
+document.addEventListener("change", function(e){
+  if (!e.target.classList.contains("wallet-select")) return;
+  var addr = e.target.dataset.addr;
+  api("/api/copy/wallet/" + addr + "/toggle", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({alloc:0.01})})
+    .then(function(){ refreshCopy(); });
+});
+
+// ── Utils ──────────────────────────────────────────────────────────────
+function shorten(s, n) { if (!s || s.length < n*2) return s||""; return s.slice(0,n) + "..." + s.slice(-4); }
+function fmtTs(ts) { if (!ts) return "?"; var d = new Date(ts * 1000); return d.toISOString().slice(11,19); }
+function fmtAge(s) {
+  if (!s || s === "N/A") return "N/A";
+  try { var diff = (Date.now() - new Date(s.replace("Z","+00:00")).getTime()) / 1000;
+    if (diff < 60) return Math.floor(diff) + "s ago";
+    if (diff < 3600) return Math.floor(diff/60) + "m ago";
+    if (diff < 86400) return Math.floor(diff/3600) + "h ago";
+    return Math.floor(diff/86400) + "d ago";
+  } catch(e) { return s.slice(0,16); }
+}
+
+// ── Uptime ─────────────────────────────────────────────────────────────
+function updateUptime() {
+  var s = Math.floor((Date.now() - uptimeStart) / 1000);
+  var m = Math.floor(s / 60), h = Math.floor(m / 60);
+  document.getElementById("uptime").textContent = h > 0 ? h + "h " + (m%60) + "m" : m + "m " + (s%60) + "s";
+}
+setInterval(updateUptime, 1000);
+
+// ── Background polling — no full page reload ────────────────────────────
+function backgroundRefresh() {
+  if (activeTab === "discovery") refreshStats();
+  else if (activeTab === "copy") refreshCopy();
+}
+setInterval(backgroundRefresh, 10000);
+setTimeout(backgroundRefresh, 3000);
