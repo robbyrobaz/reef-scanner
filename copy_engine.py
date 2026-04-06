@@ -36,7 +36,7 @@ from swap_parser import parse_transaction_for_swaps, ParsedSwap
 from swap_executor import execute_swap_legacy, load_solana_keypair, DRY_RUN as EXECUTOR_DRY_RUN, SwapResult
 from positions import (
     load_positions, save_positions, add_position_from_trade, reduce_position,
-    check_should_sell, get_positions_summary, refresh_positions,
+    get_positions_summary, refresh_positions,
     POSITIONS_FILE,
 )
 
@@ -217,9 +217,6 @@ async def execute_copy_trade(trade: CopyTrade) -> bool:
         
         elif trade.action == "SELL":
             # Sell the token for SOL
-            if trade.token_mint not in POSITIONS:
-                print(f"    ⚠️  No position to sell for {trade.token_mint[:16]}...")
-                # Try to sell anyway using the balance from source trade
             
             result = await execute_swap_legacy(
                 KEYPAIR_LOADED,
@@ -306,13 +303,7 @@ async def check_wallet_for_new_trades(
                 source_price_sol=swap.price_sol,
             )
 
-            # Handle SELL specially — check if we should follow
-            if swap.action == "SELL":
-                should_follow = check_should_sell(POSITIONS, swap.token_mint, wallet_addr)
-                if not should_follow:
-                    print(f"    ⏭  Skipping SELL of {swap.token_mint[:16]}... (not holding)")
-                    continue
-
+            # Pure copy: ALWAYS follow source wallet. If they buy, we buy. If they sell, we sell.
             # Skip if copying from our own wallet (would create infinite loop)
             if wallet_addr == our_wallet:
                 print(f"    ⏭  Skipping self-copy of {wallet_addr[:16]}...")

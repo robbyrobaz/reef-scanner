@@ -3,6 +3,7 @@ var activeTab = "discovery";
 var uptimeStart = Date.now();
 var lastStatsTs = 0;
 var pendingChanges = {};  // addr -> {enabled: bool, alloc: float}
+var pendingChallenge = "";  // challenge message for wallet verify
 
 // ── Tab Switching ──────────────────────────────────────────────────────
 function switchTab(name) {
@@ -11,6 +12,61 @@ function switchTab(name) {
   document.querySelectorAll(".tab-content").forEach(function(c){ c.classList.remove("active"); });
   document.getElementById("tab-" + name).classList.add("active");
   document.getElementById("content-" + name).classList.add("active");
+}
+
+// ── Phantom Wallet Connect ─────────────────────────────────────────────
+async function connectPhantomWallet() {
+  var input = document.getElementById('new-wallet-input');
+  var addr = input ? input.value.trim() : '';
+  
+  // If Phantom is available, try to connect directly
+  var phantom = window.phantom && window.phantom.solana;
+  if (phantom && phantom.isConnected && phantom.publicKey) {
+    addr = phantom.publicKey.toString();
+  }
+  
+  if (!addr) {
+    alert('Please enter your Solana wallet address');
+    return;
+  }
+  
+  // Generate a challenge
+  var challenge = 'Reef Scanner copy trading auth: ' + Date.now() + '|' + Math.random().toString(36).slice(2);
+  pendingChallenge = challenge;
+  
+  // Try to sign with Phantom if available
+  if (phantom && phantom.isPhantom) {
+    try {
+      var messageBytes = new TextEncoder().encode(challenge);
+      var sig = await phantom.signMessage(messageBytes, 'utf8');
+      if (sig && sig.signature) {
+        var sigB64 = btoa(String.fromCharCode.apply(null, Array.from(sig.signature)));
+        var res = await api('/api/wallet/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ address: addr, message: challenge, signature: sigB64 })
+        });
+        if (res && res.ok) {
+          location.reload();
+          return;
+        }
+      }
+    } catch (e) {
+      console.log('Phantom sign failed, trying address-only verify:', e);
+    }
+  }
+  
+  // Fallback: just set the wallet address directly (trust the user)
+  var res = await api('/api/copy/wallet', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ address: addr })
+  });
+  if (res && res.ok) {
+    location.reload();
+  } else {
+    alert('Failed to set wallet: ' + (res && res.error || 'unknown error'));
+  }
 }
 
 // ── REST ───────────────────────────────────────────────────────────────
