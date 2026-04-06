@@ -1,0 +1,15 @@
+# API keys
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+venv/
+
+# Data (runtime outputs)
+data/
+logs/
+
+# OS
+.DS_Store
+*.swp
