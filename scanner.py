@@ -218,6 +218,9 @@ def calculate_metrics(wallet: str, swaps: List[ParsedSwap]) -> Optional[WalletMe
         gaps = [times[i+1] - times[i] for i in range(len(times)-1)]
         metrics.avg_gap_seconds = sum(gaps) / len(gaps)
 
+    # Price sanity: >1 SOL/token is garbage (pump.fun parsing errors)
+    MAX_PRICE_SANITY = 1.0
+
     # Group by token
     token_swaps: Dict[str, List[ParsedSwap]] = defaultdict(list)
     for swap in swaps:
@@ -233,29 +236,85 @@ def calculate_metrics(wallet: str, swaps: List[ParsedSwap]) -> Optional[WalletMe
         metrics.buy_count += len(buys)
         metrics.sell_count += len(sells)
 
-        # Pair each buy with the next sell
-        for buy in buys:
-            next_sells = [s for s in sells if s.block_time > buy.block_time]
-            if next_sells:
-                sell = next_sells[0]
-                buy_price = buy.price_sol
-                sell_price = sell.price_sol
+        # FIFO position tracking: maintain a queue of open buy positions
+        # Each entry: {price: entry_price_per_token, sol: SOL_spent, remaining_sol: SOL_spent}
+        # The token qty for a buy = sol_amount / price
+        open_positions: List[dict] = []
 
-                if buy_price > 0:
-                    roi = (sell_price - buy_price) / buy_price
-                    all_rois.append(roi)
+        # Interleave all swaps sorted by time
+        all_swaps_sorted = sorted(token_list, key=lambda s: s.block_time)
 
-                    hold_sec = sell.block_time - buy.block_time
-                    if hold_sec > 0:
-                        hold_times.append(hold_sec)
+        for swap in all_swaps_sorted:
+            if swap.action == "BUY":
+                if 0 < swap.price_sol <= MAX_PRICE_SANITY:
+                    # Token qty = sol_amount / price
+                    token_qty = swap.amount_sol / swap.price_sol if swap.price_sol > 0 else 0
+                    open_positions.append({
+                        "price": swap.price_sol,
+                        "sol": swap.amount_sol,
+                        "token_qty": token_qty,
+                        "time": swap.block_time,
+                    })
+                # else: skip garbage price
 
-                    profit_sol = sell.amount_sol - buy.amount_sol
-                    if roi > 0:
-                        metrics.win_count += 1
-                        metrics.gross_profit += profit_sol
+            elif swap.action == "SELL":
+                if not open_positions:
+                    continue  # No open position to close — sell from unseen accumulation
+                if swap.price_sol <= 0 or swap.price_sol > MAX_PRICE_SANITY:
+                    continue  # Skip garbage price
+
+                # How many SOL worth of tokens are being sold?
+                sell_sol = swap.amount_sol  # SOL received from sale
+                # Token qty being sold
+                sell_token_qty = sell_sol / swap.price_sol if swap.price_sol > 0 else 0
+
+                # Close positions FIFO
+                remaining_sell_sol = sell_sol
+                remaining_sell_tokens = sell_token_qty
+
+                while remaining_sell_tokens > 0 and open_positions:
+                    pos = open_positions[0]
+                    if pos["token_qty"] <= 0:
+                        open_positions.pop(0)
+                        continue
+
+                    # How many tokens/SOL from this position are being closed?
+                    tokens_from_pos = min(remaining_sell_tokens, pos["token_qty"])
+                    sol_from_pos = tokens_from_pos * pos["price"]  # cost basis in SOL
+
+                    # PnL for this portion = (sell_price - entry_price) * tokens_closed
+                    pnl = (swap.price_sol - pos["price"]) * tokens_from_pos
+
+                    # ROI for this close
+                    if pos["price"] > 0:
+                        roi = (swap.price_sol - pos["price"]) / pos["price"]
+                        all_rois.append(roi)
+
+                        # Hold time
+                        hold_sec = swap.block_time - pos["time"]
+                        if hold_sec > 0:
+                            hold_times.append(hold_sec)
+
+                        # Classify win/loss on this portion
+                        if pnl > 0:
+                            metrics.win_count += 1
+                            metrics.gross_profit += pnl
+                        else:
+                            metrics.loss_count += 1
+                            metrics.gross_loss += abs(pnl)
+
+                    # Reduce remaining
+                    remaining_sell_tokens -= tokens_from_pos
+                    remaining_sell_sol -= sol_from_pos
+
+                    # Reduce or close position
+                    if abs(tokens_from_pos - pos["token_qty"]) < 0.001:
+                        open_positions.pop(0)
                     else:
-                        metrics.loss_count += 1
-                        metrics.gross_loss += abs(profit_sol)
+                        # Partial close — reduce position proportionally
+                        ratio = (pos["token_qty"] - tokens_from_pos) / pos["token_qty"]
+                        pos["token_qty"] *= ratio
+                        pos["sol"] *= ratio
 
     metrics.total_trades = metrics.win_count + metrics.loss_count
 
