@@ -1,6 +1,19 @@
 // ── State ─────────────────────────────────────────────────────────────
-var activeTab = "discovery";
+var activeTab = (typeof localStorage !== 'undefined' && localStorage.getItem('reef_tab')) || "discovery";
 var uptimeStart = Date.now();
+
+// Restore saved tab on load if not discovery
+if (activeTab !== "discovery") {
+  // DOM is ready since script is at bottom of body
+  try {
+    document.querySelectorAll(".tab").forEach(function(t){ t.classList.remove("active"); });
+    document.querySelectorAll(".tab-content").forEach(function(c){ c.classList.remove("active"); });
+    var tabEl = document.getElementById("tab-" + activeTab);
+    var contentEl = document.getElementById("content-" + activeTab);
+    if (tabEl) tabEl.classList.add("active");
+    if (contentEl) contentEl.classList.add("active");
+  } catch(e) {}
+}
 var lastStatsTs = 0;
 var pendingChanges = {};  // addr -> {enabled: bool, alloc: float}
 var pendingChallenge = "";  // challenge message for wallet verify
@@ -8,6 +21,7 @@ var pendingChallenge = "";  // challenge message for wallet verify
 // ── Tab Switching ──────────────────────────────────────────────────────
 function switchTab(name) {
   activeTab = name;
+  try { localStorage.setItem('reef_tab', name); } catch(e) {}
   document.querySelectorAll(".tab").forEach(function(t){ t.classList.remove("active"); });
   document.querySelectorAll(".tab-content").forEach(function(c){ c.classList.remove("active"); });
   document.getElementById("tab-" + name).classList.add("active");
