@@ -160,12 +160,12 @@ def compute_stats() -> Dict:
 
 def load_copy_config() -> Dict:
     if not COPY_CONFIG_FILE.exists():
-        return {"user_wallet": "", "global_enabled": False, "copies": {}}
+        return {"user_wallet": "", "global_enabled": False, "trade_mode": "paper", "keypair_path": "", "copies": {}}
     try:
         with open(COPY_CONFIG_FILE) as f:
             return json.load(f)
     except:
-        return {"user_wallet": "", "global_enabled": False, "copies": {}}
+        return {"user_wallet": "", "global_enabled": False, "trade_mode": "paper", "keypair_path": "", "copies": {}}
 
 
 def save_copy_config(config: Dict) -> None:

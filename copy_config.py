@@ -24,12 +24,16 @@ class CopyConfig:
     """Full copy trading config"""
     user_wallet: str = ""
     global_enabled: bool = False
+    trade_mode: str = "paper"  # "paper" or "live"
+    keypair_path: str = ""
     copies: Dict[str, CopyEntry] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
             "user_wallet": self.user_wallet,
             "global_enabled": self.global_enabled,
+            "trade_mode": self.trade_mode,
+            "keypair_path": self.keypair_path,
             "copies": {
                 addr: asdict(entry) for addr, entry in self.copies.items()
             }
@@ -43,6 +47,8 @@ class CopyConfig:
         return cls(
             user_wallet=data.get("user_wallet", ""),
             global_enabled=data.get("global_enabled", False),
+            trade_mode=data.get("trade_mode", "paper"),
+            keypair_path=data.get("keypair_path", ""),
             copies=copies,
         )
 

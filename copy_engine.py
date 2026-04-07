@@ -13,7 +13,8 @@ import csv
 import os
 import sys
 import time
-from dataclasses import dataclass, asdict, field
+from pathlib import Path
+from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
@@ -370,7 +371,7 @@ async def run_engine():
     
     # Load config first to get trade_mode
     config = load_copy_config()
-    trade_mode = config.get("trade_mode", "paper")
+    trade_mode = config.trade_mode
     
     # --live flag overrides config; otherwise use config
     cli_live = "--live" in sys.argv
@@ -387,7 +388,7 @@ async def run_engine():
     print(f"   Loaded {len(POSITIONS)} positions from disk")
 
     # Try to load keypair from config path or default
-    keypair_path = config.get("keypair_path", str(DATA_DIR / "keypair.json"))
+    keypair_path = config.keypair_path if config.keypair_path else str(Path(DATA_DIR) / "keypair.json")
     KEYPAIR_LOADED = await load_solana_keypair(keypair_path)
     if KEYPAIR_LOADED:
         print(f"   Keypair: {KEYPAIR_LOADED.pubkey()} ({keypair_path})")
