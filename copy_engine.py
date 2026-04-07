@@ -340,6 +340,7 @@ async def run_engine_cycle(config: CopyConfig) -> int:
         return 0
 
     total = 0
+    sigs_updated = False
     for wallet_addr, entry in enabled_copies.items():
         try:
             trades = await check_wallet_for_new_trades(
@@ -351,11 +352,12 @@ async def run_engine_cycle(config: CopyConfig) -> int:
                 latest_sig = trades[-1].source_sig
                 entry.last_sig = latest_sig
                 entry.last_copy_ts = int(time.time())
+                sigs_updated = True
 
         except Exception as e:
             print(f"    ⚠️  Error checking {wallet_addr[:16]}...: {e}")
 
-    if total > 0:
+    if total > 0 or sigs_updated:
         save_copy_config(config)
 
     return total

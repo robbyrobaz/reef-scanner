@@ -249,10 +249,13 @@ def calculate_metrics(wallet: str, swaps: List[ParsedSwap]) -> Optional[WalletMe
                     if hold_sec > 0:
                         hold_times.append(hold_sec)
 
+                    profit_sol = sell.amount_sol - buy.amount_sol
                     if roi > 0:
                         metrics.win_count += 1
+                        metrics.gross_profit += profit_sol
                     else:
                         metrics.loss_count += 1
+                        metrics.gross_loss += abs(profit_sol)
 
     metrics.total_trades = metrics.win_count + metrics.loss_count
 
@@ -329,7 +332,7 @@ def purge_old_entries(filepath: str, max_age_days: int = 30):
     if purged > 0:
         with open(filepath, "w", newline="") as f:
             writer = csv.DictReader
-            fieldnames = ["address", "score", "total_trades", "win_rate", "avg_roi",
+            fieldnames = ["address", "score", "total_trades", "win_rate", "profit_factor", "avg_roi",
                           "best_roi", "worst_roi", "avg_hold_minutes", "last_active",
                           "favorite_token", "solscan_link"]
             writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -376,7 +379,7 @@ def save_csv(wallets: List[WalletMetrics], filepath: str):
     with open(filepath, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow([
-            "address", "score", "total_trades", "win_rate", "avg_roi",
+            "address", "score", "total_trades", "win_rate", "profit_factor", "avg_roi",
             "best_roi", "worst_roi", "avg_hold_minutes", "last_active",
             "favorite_token", "solscan_link"
         ])
@@ -388,6 +391,7 @@ def save_csv(wallets: List[WalletMetrics], filepath: str):
                 round(w.score, 3),
                 w.total_trades,
                 round(w.win_rate, 3),
+                round(w.profit_factor, 2),
                 round(w.avg_roi, 3),
                 round(w.best_roi, 3),
                 round(w.worst_roi, 3),
@@ -489,18 +493,19 @@ async def main():
     else:
         display_wallets = wallets[:15] if len(wallets) >= 15 else wallets
 
-    print(f"\n{'='*65}")
-    print(f"{'#':<4} {'Address':<16} {'Score':<6} {'Trades':<6} {'Win%':<6} {'Span':<7} {'Type':<7} {'ROI%':<10}")
-    print(f"{'='*65}")
+    print(f"\n{'='*75}")
+    print(f"{'#':<4} {'Address':<16} {'Score':<6} {'Trades':<6} {'Win%':<6} {'PF':<6} {'Span':<7} {'Type':<7} {'ROI%':<10}")
+    print(f"{'='*75}")
 
     for i, w in enumerate(display_wallets, 1):
         roi_pct = f"{w.avg_roi * 100:.0f}%" if w.avg_roi else "0%"
         win_str = f"{w.win_rate:.0%}" if w.total_trades > 0 else "N/A"
+        pf_str = f"{w.profit_factor:.1f}" if w.profit_factor < 999 else "∞"
         span_h = f"{w.span_seconds/3600:.1f}h" if w.span_seconds else "?"
         ttype = w.trader_type
         flag = "⚠️ " if ttype == "BOT" else ""
         print(f"{i:<4} {w.address[:14]}..{w.address[-4:]} "
-              f"{w.score:.3f}  {w.total_trades:<6} {win_str:<6} {span_h:<7} {flag}{ttype:<7} {roi_pct}")
+              f"{w.score:.3f}  {w.total_trades:<6} {win_str:<6} {pf_str:<6} {span_h:<7} {flag}{ttype:<7} {roi_pct}")
 
     # Save NEW swaps (append mode) + wallet DB (recalculated from full history)
     save_swaps_csv(truly_new_swaps, f"{DATA_DIR}/swaps.csv")
@@ -517,6 +522,8 @@ async def main():
         print(f"   🏆 Top wallet: {top.address[:20]}...")
         print(f"   Score: {top.score:.3f}")
         print(f"   Win rate: {top.win_rate:.0%}")
+        pf_display = f"{top.profit_factor:.2f}" if top.profit_factor < 999 else "∞"
+        print(f"   Profit factor: {pf_display}")
         print(f"   Avg ROI: {top.avg_roi * 100:.0f}%")
         print(f"   https://solscan.io/account/{top.address}")
 

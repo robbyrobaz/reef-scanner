@@ -366,12 +366,16 @@ def build_dashboard_html() -> str:
         roi = float(w.get("avg_roi", 0)) * 100
         score_color = "#3fb950" if score > 0.8 else "#58a6ff" if score > 0.5 else "#7d8590"
         roi_color = "#3fb950" if roi > 0 else "#f85149" if roi < 0 else "#7d8590"
+        pf_val = float(w.get("profit_factor", 0))
+        pf_str = f"{pf_val:.1f}" if pf_val < 999 else "∞"
+        pf_color = "#3fb950" if pf_val > 1 else "#f85149" if pf_val > 0 else "#7d8590"
         wallet_rows += (
             f'<tr>'
             f'<td class="addr"><a href="https://solscan.io/account/{addr}" target="_blank" style="color:#58a6ff;text-decoration:none">{shorten_addr(addr, 8)}</a></td>'
             f'<td style="color:{score_color};font-weight:600">{score:.3f}</td>'
             f'<td>{w.get("total_trades","0")}</td>'
             f'<td>{w.get("win_rate","N/A")}</td>'
+            f'<td style="color:{pf_color};font-weight:600">{pf_str}</td>'
             f'<td style="color:{roi_color}">{roi:.0f}%</td>'
             f'<td class="neutral">{w.get("favorite_token","")[:12]}</td>'
             f'<td class="neutral">{fmt_age(w.get("last_active","N/A"))}</td>'
@@ -403,11 +407,14 @@ def build_dashboard_html() -> str:
     # Top wallet
     top_w = stats["top_wallets"][0] if stats["top_wallets"] else None
     if top_w:
+        top_pf = float(top_w.get("profit_factor", 0))
+        top_pf_str = f"{top_pf:.1f}" if top_pf < 999 else "∞"
         best_html = (
             f'<div class="best-worst best">'
             f'<strong class="addr">{shorten_addr(top_w.get("address",""),16)}</strong><br>'
             f'Score: {float(top_w.get("score",0)):.3f} | '
             f'Win: {top_w.get("win_rate","N/A")} | '
+            f'PF: {top_pf_str} | '
             f'ROI: {float(top_w.get("avg_roi",0))*100:.0f}%'
             f'</div>'
         )
@@ -433,6 +440,9 @@ def build_dashboard_html() -> str:
         score_color = "#3fb950" if score > 0.8 else "#58a6ff" if score > 0.5 else "#7d8590"
         roi_color = "#3fb950" if roi > 0 else "#f85149" if roi < 0 else "#7d8590"
         row_bg = "background:#1c2d1a" if is_enabled else ""
+        cpf_val = float(w.get("profit_factor", 0))
+        cpf_str = f"{cpf_val:.1f}" if cpf_val < 999 else "∞"
+        cpf_color = "#3fb950" if cpf_val > 1 else "#f85149" if cpf_val > 0 else "#7d8590"
         copy_wallet_rows += (
             f'<tr style="{row_bg}" data-copy-addr="{addr}">'
             f'<td><input type="checkbox" class="wallet-select" data-addr="{addr}" {"checked" if is_tracked else ""}></td>'
@@ -440,6 +450,7 @@ def build_dashboard_html() -> str:
             f'<td style="color:{score_color};font-weight:600">{score:.3f}</td>'
             f'<td>{trades}</td>'
             f'<td>{wr}</td>'
+            f'<td style="color:{cpf_color};font-weight:600">{cpf_str}</td>'
             f'<td style="color:{roi_color}">{roi:.0f}%</td>'
             f'<td>{fmt_age(last_active)}</td>'
             f'<td><input type="number" class="alloc-input" value="{alloc:.3f}" min="{COPY_MIN_ALLOC_SOL}" max="{COPY_MAX_ALLOC_SOL}" step="0.001" data-addr="{addr}"></td>'
@@ -447,7 +458,7 @@ def build_dashboard_html() -> str:
             f'</tr>'
         )
     if not copy_wallet_rows:
-        copy_wallet_rows = '<tr><td colspan="9" class="neutral" style="text-align:center;padding:30px">Run scanner first</td></tr>'
+        copy_wallet_rows = '<tr><td colspan="10" class="neutral" style="text-align:center;padding:30px">Run scanner first</td></tr>'
 
     # Copy trade history
     copy_trade_rows = ""
@@ -580,7 +591,7 @@ def build_dashboard_html() -> str:
         '<div class="section"><h2>🔥 DEX BREAKDOWN</h2><table id="dex-table"><tr><th>DEX</th><th>Swaps</th><th>Share</th></tr>' + (dex_rows or '<tr><td colspan="3" class="neutral">No data</td></tr>') + '</table></div>\n'
         '<div class="section"><h2>🏆 TOP WALLET</h2>' + best_html + '</div>\n'
         '</div>\n\n'
-        '<div class="section"><h2>👛 TOP WALLETS BY SCORE</h2><table><thead><tr><th>Address</th><th>Score</th><th>Trades</th><th>Win%</th><th>ROI</th><th>Token</th><th>Last Active</th></tr></thead><tbody id="wallet-table-body">' + (wallet_rows or '<tr><td colspan="7" class="neutral">No wallets yet</td></tr>') + '</tbody></table></div>\n\n'
+        '<div class="section"><h2>👛 TOP WALLETS BY SCORE</h2><table><thead><tr><th>Address</th><th>Score</th><th>Trades</th><th>Win%</th><th>PF</th><th>ROI</th><th>Token</th><th>Last Active</th></tr></thead><tbody id="wallet-table-body">' + (wallet_rows or '<tr><td colspan="8" class="neutral">No wallets yet</td></tr>') + '</tbody></table></div>\n\n'
         '<div class="section"><h2>💱 RECENT SWAPS</h2><table><thead><tr><th>Time</th><th>Action</th><th>Token</th><th>Amt</th><th>SOL</th><th>DEX</th><th>Sig</th></tr></thead><tbody id="swap-table-body">' + (swap_rows or '<tr><td colspan="7" class="neutral">No swaps yet</td></tr>') + '</tbody></table></div>\n\n'
         '<div class="section"><h2>📋 CRON LOG</h2>' + log_html + '</div>\n'
         '</div>\n\n'
@@ -604,7 +615,7 @@ def build_dashboard_html() -> str:
         + keypair_status + '\n'
         + keypair_upload + '\n'
         '</div>\n\n'
-        '<table><thead><tr><th style="width:20px"></th><th>Address</th><th>Score</th><th>Trades</th><th>Win%</th><th>ROI</th><th>Last Active</th><th>Alloc (SOL)</th><th>Status</th></tr></thead>\n'
+        '<table><thead><tr><th style="width:20px"></th><th>Address</th><th>Score</th><th>Trades</th><th>Win%</th><th>PF</th><th>ROI</th><th>Last Active</th><th>Alloc (SOL)</th><th>Status</th></tr></thead>\n'
         '<tbody id="copy-wallet-body">' + copy_wallet_rows + '</tbody></table>\n'
         '<div style="margin-top:12px;display:flex;align-items:center;gap:12px">\n'
         '<button id="save-changes-btn" class="save-changes-btn" onclick="savePendingChanges()">Save Changes</button>\n'
@@ -859,42 +870,51 @@ async def verify_wallet(request: Request):
 
 @app.get("/api/wallet/stats")
 async def get_wallet_stats():
-    """Compute PnL stats from copy_trades.csv for the user's wallet."""
+    """Compute PnL stats from copy_trades.csv for the user's wallet.
+    
+    When user_wallet is not set, shows aggregated stats across all copy trades
+    (paper + live) so the user can see performance even without a configured wallet.
+    """
     copy_config = load_copy_config()
-    user_wallet = copy_config.get("user_wallet", "")
-    if not user_wallet:
-        return JSONResponse({
-            "pnl_sol": 0, "win_rate": 0, "profit_factor": 0,
-            "total_trades": 0, "wins": 0, "losses": 0,
-            "total_buys": 0, "total_sells": 0, "avg_win": 0, "avg_loss": 0
-        })
+    user_wallet = copy_config.get("user_wallet", "") or ""
     
     if not COPY_TRADES_FILE.exists():
         return JSONResponse({
             "pnl_sol": 0, "win_rate": 0, "profit_factor": 0,
             "total_trades": 0, "wins": 0, "losses": 0,
-            "total_buys": 0, "total_sells": 0, "avg_win": 0, "avg_loss": 0
+            "total_buys": 0, "total_sells": 0, "avg_win": 0, "avg_loss": 0,
+            "paper_trades": 0, "live_trades": 0
         })
     
     try:
         with open(COPY_TRADES_FILE, newline="") as f:
-            trades = list(csv.DictReader(f))
+            all_trades = list(csv.DictReader(f))
     except:
         return JSONResponse({
             "pnl_sol": 0, "win_rate": 0, "profit_factor": 0,
             "total_trades": 0, "wins": 0, "losses": 0,
-            "total_buys": 0, "total_sells": 0, "avg_win": 0, "avg_loss": 0
+            "total_buys": 0, "total_sells": 0, "avg_win": 0, "avg_loss": 0,
+            "paper_trades": 0, "live_trades": 0
         })
     
-    # Filter to our wallet's trades
-    our_trades = [t for t in trades if t.get("our_wallet") == user_wallet and t.get("status") == "confirmed"]
+    # If user_wallet is set, only count that wallet's trades.
+    # Otherwise aggregate ALL trades so we can see performance without a configured wallet.
+    if user_wallet:
+        our_trades = [t for t in all_trades
+                      if t.get("our_wallet") == user_wallet
+                      and t.get("status") in ("confirmed", "dry_run")]
+    else:
+        # Show all trades (paper + live) when no user wallet is configured
+        our_trades = [t for t in all_trades
+                      if t.get("status") in ("confirmed", "dry_run")]
     
     total_trades = len(our_trades)
     if total_trades == 0:
         return JSONResponse({
             "pnl_sol": 0, "win_rate": 0, "profit_factor": 0,
             "total_trades": 0, "wins": 0, "losses": 0,
-            "total_buys": 0, "total_sells": 0, "avg_win": 0, "avg_loss": 0
+            "total_buys": 0, "total_sells": 0, "avg_win": 0, "avg_loss": 0,
+            "paper_trades": 0, "live_trades": 0
         })
     
     wins = 0
@@ -904,6 +924,8 @@ async def get_wallet_stats():
     total_losses = 0.0
     total_buys = 0
     total_sells = 0
+    paper_trades = 0
+    live_trades = 0
     
     for t in our_trades:
         action = t.get("action", "")
@@ -912,31 +934,31 @@ async def get_wallet_stats():
         elif action == "SELL":
             total_sells += 1
         
-        # PnL = our_price - source_price for sells, source_price - our_price for buys
         source_price = float(t.get("source_price_sol", 0) or 0)
         our_price = float(t.get("our_price_sol", 0) or 0)
         scaled = float(t.get("scaled_amount_sol", 0) or 0)
+        status = t.get("status", "")
         
+        if status == "dry_run":
+            paper_trades += 1
+            continue  # Paper trades — no real PnL data
+        
+        # Live trade — both prices available
+        live_trades += 1
         if action == "SELL" and source_price > 0 and our_price > 0:
             pnl = (source_price - our_price) * scaled
             total_pnl += pnl
-            if pnl > 0:
-                wins += 1
-                total_wins += pnl
-            else:
-                losses += 1
-                total_losses += abs(pnl)
+            if pnl > 0: wins += 1; total_wins += pnl
+            else: losses += 1; total_losses += abs(pnl)
         elif action == "BUY" and source_price > 0 and our_price > 0:
             pnl = (our_price - source_price) * scaled
             total_pnl += pnl
-            if pnl > 0:
-                wins += 1
-                total_wins += pnl
-            else:
-                losses += 1
-                total_losses += abs(pnl)
+            if pnl > 0: wins += 1; total_wins += pnl
+            else: losses += 1; total_losses += abs(pnl)
     
-    win_rate = (wins / total_trades * 100) if total_trades > 0 else 0
+    # Win rate based on live trades only (paper trades are "pending" realisation)
+    live_total = wins + losses
+    win_rate = (wins / live_total * 100) if live_total > 0 else 0
     avg_win = (total_wins / wins) if wins > 0 else 0
     avg_loss = (total_losses / losses) if losses > 0 else 0
     profit_factor = (total_wins / total_losses) if total_losses > 0 else (total_wins if total_wins > 0 else 0)
@@ -951,7 +973,9 @@ async def get_wallet_stats():
         "total_buys": total_buys,
         "total_sells": total_sells,
         "avg_win": round(avg_win, 6),
-        "avg_loss": round(avg_loss, 6)
+        "avg_loss": round(avg_loss, 6),
+        "paper_trades": paper_trades,
+        "live_trades": live_trades
     })
 
 

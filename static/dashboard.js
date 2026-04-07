@@ -133,16 +133,20 @@ function rebuildSwaps(swaps) {
 
 function rebuildWallets(wallets) {
   var tbody = document.getElementById("wallet-table-body");
-  if (!wallets || !wallets.length) { tbody.innerHTML = '<tr><td colspan="7" class="neutral">No wallets yet</td></tr>'; return; }
+  if (!wallets || !wallets.length) { tbody.innerHTML = '<tr><td colspan="8" class="neutral">No wallets yet</td></tr>'; return; }
   var html = wallets.map(function(w){
     var score = Number(w.score||0), roi = Number(w.avg_roi||0)*100;
     var addr = w.address||"";
     var scoreColor = score > 0.8 ? "#3fb950" : score > 0.5 ? "#58a6ff" : "#7d8590";
     var roiColor = roi > 0 ? "#3fb950" : roi < 0 ? "#f85149" : "#7d8590";
+    var pf = Number(w.profit_factor||0);
+    var pfStr = pf >= 999 ? "∞" : pf.toFixed(1);
+    var pfColor = pf > 1 ? "#3fb950" : pf > 0 ? "#f85149" : "#7d8590";
     return "<tr><td class=\"addr\"><a href=\"https://solscan.io/account/" + addr + "\" target=\"_blank\" style=\"color:#58a6ff;text-decoration:none\">" + shorten(addr,8) + "</a></td>" +
       "<td style=\"color:" + scoreColor + ";font-weight:600\">" + score.toFixed(3) + "</td>" +
       "<td>" + (w.total_trades||"0") + "</td>" +
       "<td>" + (w.win_rate||"N/A") + "</td>" +
+      "<td style=\"color:" + pfColor + ";font-weight:600\">" + pfStr + "</td>" +
       "<td style=\"color:" + roiColor + "\">" + roi.toFixed(0) + "%</td>" +
       "<td class=\"neutral\">" + ((w.favorite_token||"")||"").slice(0,12) + "</td>" +
       "<td class=\"neutral\">" + fmtAge(w.last_active||"N/A") + "</td></tr>";

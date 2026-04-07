@@ -19,6 +19,8 @@ class WalletMetrics:
     avg_roi: float = 0.0
     best_roi: float = 0.0
     worst_roi: float = 0.0
+    gross_profit: float = 0.0   # Sum of winning trade profits (in SOL)
+    gross_loss: float = 0.0     # Sum of losing trade losses (absolute, in SOL)
     avg_hold_time_seconds: int = 0
     last_active: Optional[datetime] = None
     favorite_token: str = ""
@@ -32,6 +34,13 @@ class WalletMetrics:
         if self.total_trades == 0:
             return 0.0
         return self.win_count / self.total_trades
+
+    @property
+    def profit_factor(self) -> float:
+        """Gross profit / gross loss. >1 = profitable, <1 = losing money."""
+        if self.gross_loss == 0:
+            return 999.0 if self.gross_profit > 0 else 0.0
+        return self.gross_profit / self.gross_loss
 
     @property
     def trader_type(self) -> str:
