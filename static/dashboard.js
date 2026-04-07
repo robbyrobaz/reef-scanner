@@ -79,6 +79,17 @@ async function connectPhantomWallet() {
   }
 }
 
+// ── Disconnect Wallet ──────────────────────────────────────────────────
+async function disconnectWallet() {
+  if (!confirm('Disconnect your wallet from Reef Scanner?')) return;
+  var res = await api('/api/wallet/disconnect', { method: 'POST' });
+  if (res && res.ok) {
+    location.reload();
+  } else {
+    alert('Failed to disconnect wallet');
+  }
+}
+
 // ── Trade Mode Toggle ──────────────────────────────────────────────────
 async function toggleMode() {
   var btn = document.getElementById('mode-toggle-btn');

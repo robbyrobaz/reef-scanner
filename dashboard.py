@@ -538,11 +538,17 @@ def build_dashboard_html() -> str:
         f'</div>'
         f'<div class="positions-grid" id="positions-grid"></div>'
         f'</div>'
-        # Note about connecting wallet (no button — behind-the-scenes later)
-        f'<div style="margin-top:16px;padding:12px;border:1px dashed #30363d;border-radius:8px">'
-        f'<span class="neutral" style="font-size:12px">Connect a wallet to track personal PnL. Wallet connection will be added behind the scenes.</span>'
+        # Phantom connect UI in the wallet section
+        f'<div style="margin-top:16px;padding:14px;border:1px solid #30363d;border-radius:8px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
+        + (f'<span class="connected-badge" id="phantom-badge">&#128274; {user_wallet[:12]}...</span>'
+           f'<span class="neutral" style="font-size:12px">Connected to Phantom</span>'
+           f'<button class="connect-btn" style="margin-left:auto;background:#da3633" onclick="disconnectWallet()">Disconnect</button>'
+           if user_wallet
+           else f'<span style="font-size:13px;color:#7d8590">Connect your Phantom wallet to track personal PnL</span>'
+                f'<button class="connect-btn" id="phantom-connect-btn" style="margin-left:auto" onclick="connectPhantomWallet()">&#128526; Connect Phantom</button>')
+        + f'<span id="phantom-error" style="color:#f85149;font-size:12px;display:none"></span>'
         f'</div>'
-        f'</div>'
+        f'</div>\n'
     )
 
     global_toggle_bg = "#da3633" if global_enabled else "#238636"
@@ -569,12 +575,12 @@ def build_dashboard_html() -> str:
         '</head>\n<body>\n'
         '<div class="header">\n'
         '<h1>🏄 REEF SCANNER <span class="tag ' + copy_badge_class + '" id="copy-status-badge">' + copy_badge_text + '</span></h1>\n'
-        '<div id="wallet-connect-area">'
-        '<button class="connect-btn" id="connect-wallet-btn" onclick="connectPhantomWallet()">'
-        + ('🔗 Change Wallet' if user_wallet else '🔮 Connect Phantom') +
-        '</button>'
-        + (('<span id="connected-wallet" class="connected-badge">' + user_wallet[:8] + '...</span>') if user_wallet else '') +
-        '</div>\n'
+        '<div id="header-status">'
+        + ('<a href="#" onclick="switchTab(\'copy\');return false" style="color:#58a6ff;font-size:12px">&#128274; ' + user_wallet[:12] + '...</a>'
+           if user_wallet
+           else '<span style="color:#7d8590;font-size:12px">&#128274; No wallet connected</span>')
+        + ' · <a href="#" onclick="switchTab(\'copy\');return false" style="color:#7d8590;font-size:12px">' + copy_badge_text + '</a>'
+        + '</div>\n'
         '<p>Solana DEX Wallet Discovery + Copy Trading</p>\n'
         '<div class="status-row">\n'
         '<div class="status-item"><span class="live-dot"></span>Last scan: <span id="last-scan">' + (stats['last_scan'] or 'Never') + '</span></div>\n'
