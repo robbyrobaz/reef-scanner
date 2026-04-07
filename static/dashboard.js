@@ -18,7 +18,7 @@ function switchTab(name) {
 async function connectPhantomWallet() {
   var phantom = window.phantom && window.phantom.solana;
   var errorEl = document.getElementById("phantom-error");
-  if (errorEl) errorEl.style.display = "none";
+  if (errorEl) { errorEl.style.display = "none"; errorEl.textContent = ""; }
   
   if (!phantom || !phantom.isPhantom) {
     // No Phantom installed — use manual address entry
@@ -35,12 +35,11 @@ async function connectPhantomWallet() {
     return;
   }
 
-  // Phantom is installed — connect (opens Phantom popup)
   try {
+    // Step 1: Connect to Phantom
     await phantom.connect();
   } catch (e) {
-    // User rejected or error — try fallback
-    if (errorEl) { errorEl.textContent = 'Connection rejected or failed'; errorEl.style.display = 'inline'; }
+    if (errorEl) { errorEl.textContent = 'Connection rejected'; errorEl.style.display = 'inline'; }
     return;
   }
 
@@ -49,11 +48,29 @@ async function connectPhantomWallet() {
     return;
   }
 
-  var addr = phantom.publicKey.toString();
+  var connectedAddr = phantom.publicKey.toString();
+
+  // Step 2: Sign a verification message to prove ownership
+  var challenge = "Reef Scanner verification " + Date.now();
+  var signed;
+  try {
+    signed = await phantom.signMessage(challenge, 'utf8');
+  } catch (e) {
+    if (errorEl) { errorEl.textContent = 'Signature rejected — cannot verify ownership'; errorEl.style.display = 'inline'; }
+    return;
+  }
+
+  // Step 3: Verify signature matches connected address
+  if (!signed.publicKey || signed.publicKey.toString() !== connectedAddr) {
+    if (errorEl) { errorEl.textContent = 'Signature mismatch — wallet verification failed'; errorEl.style.display = 'inline'; }
+    return;
+  }
+
+  // Step 4: Send verified address to server
   var res = await api('/api/copy/wallet', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ address: addr })
+    body: JSON.stringify({ address: connectedAddr })
   });
   if (res && res.ok) {
     location.reload();
@@ -225,8 +242,8 @@ async function refreshWalletStats() {
   if (livEl) livEl.textContent = data.live_trades;
   if (tbEl) tbEl.textContent = data.total_buys;
   if (tsEl) tsEl.textContent = data.total_sells;
-  if (awEl) awEl.textContent = data.avg_win > 0 ? "+" + data.avg_win.toFixed(4) : data.avg_win.toFixed(4);
-  if (alEl) alEl.textContent = data.avg_loss > 0 ? "-" + data.avg_loss.toFixed(4) : data.avg_loss.toFixed(4);
+  if (awEl) awEl.textContent = data.avg_win > 0 ? "+" + data.avg_win.toFixed(4) : "—";
+  if (alEl) alEl.textContent = data.avg_loss > 0 ? "-" + data.avg_loss.toFixed(4) : "—";
 }
 
 async function refreshCopy() {
