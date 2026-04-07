@@ -305,11 +305,6 @@ async def check_wallet_for_new_trades(
             )
 
             # Pure copy: ALWAYS follow source wallet. If they buy, we buy. If they sell, we sell.
-            # Skip if copying from our own wallet (would create infinite loop)
-            if wallet_addr == our_wallet:
-                print(f"    ⏭  Skipping self-copy of {wallet_addr[:16]}...")
-                continue
-
             if DRY_RUN:
                 print(f"    🐸 DRY RUN: copy {swap.action} {swap.amount_sol:.4f} SOL "
                       f"(alloc {entry.alloc_sol:.4f}) of {swap.token_mint[:16]}...")
@@ -337,6 +332,10 @@ async def run_engine_cycle(config: CopyConfig) -> int:
         POSITIONS = await refresh_positions(POSITIONS, config.user_wallet)
 
     enabled_copies = {addr: e for addr, e in config.copies.items() if e.enabled}
+    # Filter out self-copy (user's own wallet wouldn't generate new trades anyway,
+    # but this also prevents the confusing skip message on every poll cycle)
+    if config.user_wallet and config.user_wallet in enabled_copies:
+        del enabled_copies[config.user_wallet]
     if not enabled_copies:
         return 0
 
