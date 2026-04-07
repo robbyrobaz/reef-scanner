@@ -495,46 +495,51 @@ def build_dashboard_html() -> str:
     else:
         log_html = "<p class='neutral'>No cron log</p>"
 
-    # Wallet section
-    if user_wallet:
-        wallet_section = (
-            f'<div class="section">'
-            f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">'
-            f'<div><h2 style="margin:0">👛 MY WALLET</h2><span class="addr" style="font-size:12px">{user_wallet}</span></div>'
-            f'<div style="text-align:right"><div class="balance-display" id="sol-balance">— SOL</div><div class="neutral" style="font-size:11px">Balance</div></div>'
-            f'</div>'
-            f'<div style="display:flex;gap:16px;align-items:center">'
-            f'<span>Allocated: <span class="total-allocated" id="total-allocated">{total_allocated:.3f} SOL</span></span>'
-            f'<span>Copying: <span style="color:#3fb950" id="copying-count">{enabled_count} wallets</span></span>'
-            f'<span>Trades: <span id="copy-trades-count">{len(copy_trades)}</span></span>'
-            f'</div>'
-            f'<div class="wallet-stats-grid" id="wallet-stats-grid">'
-            f'<div class="wallet-stat"><div class="wallet-stat-value" id="wstat-pnl">—</div><div class="wallet-stat-label">Total PnL (SOL)</div></div>'
-            f'<div class="wallet-stat"><div class="wallet-stat-value" id="wstat-winrate">—</div><div class="wallet-stat-label">Win Rate</div></div>'
-            f'<div class="wallet-stat"><div class="wallet-stat-value" id="wstat-profit-factor">—</div><div class="wallet-stat-label">Profit Factor</div></div>'
-            f'<div class="wallet-stat"><div class="wallet-stat-value" id="wstat-total-trades">—</div><div class="wallet-stat-label">Total Trades</div></div>'
-            f'<div class="wallet-stat"><div class="wallet-stat-value" id="wstat-total-buy">—</div><div class="wallet-stat-label">Total Buys</div></div>'
-            f'<div class="wallet-stat"><div class="wallet-stat-value" id="wstat-total-sell">—</div><div class="wallet-stat-label">Total Sells</div></div>'
-            f'<div class="wallet-stat"><div class="wallet-stat-value" id="wstat-avg-win">—</div><div class="wallet-stat-label">Avg Win (SOL)</div></div>'
-            f'<div class="wallet-stat"><div class="wallet-stat-value" id="wstat-avg-loss">—</div><div class="wallet-stat-label">Avg Loss (SOL)</div></div>'
-            f'</div>'
-            f'<div id="positions-container" style="margin-top:20px">'
-            f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'
-            f'<h3 style="margin:0;font-size:13px;color:#7d8590">📦 MY POSITIONS</h3>'
-            f'<span id="positions-total" style="font-size:12px;color:#7d8590"></span>'
-            f'</div>'
-            f'<div class="positions-grid" id="positions-grid"></div>'
-            f'</div></div>'
-        )
-    else:
-        wallet_section = (
-            '<div class="no-wallet">'
-            '<h2 style="margin:0 0 8px">👛 Connect Your Wallet</h2>'
-            '<p>Click the <strong>"Connect Phantom"</strong> button above to link your wallet.</p>'
-            '<p style="font-size:12px;color:#7d8590;margin-top:8px">You\'ll be asked to sign a message with Phantom to verify ownership.<br>Your keypair for trade execution can be uploaded separately.</p>'
-            '<button class="connect-btn" style="margin-top:12px" onclick="connectPhantomWallet()">🔮 Connect Phantom</button>'
-            '</div>'
-        )
+    # Stats section — always shown, populated by JS when on copy tab
+    # When wallet is connected: shows personal PnL stats
+    # When no wallet: shows aggregate copy trading stats
+    wallet_id_label = f'<span class="addr" style="font-size:12px">{user_wallet}</span>' if user_wallet else '<span class="neutral" style="font-size:12px">Not connected</span>'
+    wallet_heading = f'👛 MY WALLET' if user_wallet else '📊 COPY TRADING STATS'
+    
+    wallet_section = (
+        f'<div class="section">'
+        f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">'
+        f'<div><h2 style="margin:0">{wallet_heading}</h2>{wallet_id_label}</div>'
+        f'<div style="text-align:right"><div class="balance-display" id="sol-balance">— SOL</div><div class="neutral" style="font-size:11px">Balance</div></div>'
+        f'</div>'
+        f'<div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">'
+        f'<span>Allocated: <span class="total-allocated" id="total-allocated">{total_allocated:.3f} SOL</span></span>'
+        f'<span>Copying: <span style="color:#3fb950" id="copying-count">{enabled_count} wallets</span></span>'
+        f'<span>Trades: <span id="copy-trades-count">{len(copy_trades)}</span></span>'
+        f'</div>'
+        # Stats grid — always rendered, IDs used by refreshWalletStats()
+        f'<div class="wallet-stats-grid" id="wallet-stats-grid">'
+        f'<div class="wallet-stat"><div class="wallet-stat-value" id="wstat-pnl">—</div><div class="wallet-stat-label">Total PnL (SOL)</div></div>'
+        f'<div class="wallet-stat"><div class="wallet-stat-value" id="wstat-winrate">—</div><div class="wallet-stat-label">Win Rate</div></div>'
+        f'<div class="wallet-stat"><div class="wallet-stat-value" id="wstat-profit-factor">—</div><div class="wallet-stat-label">Profit Factor</div></div>'
+        f'<div class="wallet-stat"><div class="wallet-stat-value" id="wstat-total-trades">—</div><div class="wallet-stat-label">Total Trades</div></div>'
+        f'<div class="wallet-stat"><div class="wallet-stat-value" id="wstat-paper">—</div><div class="wallet-stat-label">Paper Trades</div></div>'
+        f'<div class="wallet-stat"><div class="wallet-stat-value" id="wstat-live">—</div><div class="wallet-stat-label">Live Trades</div></div>'
+        f'<div class="wallet-stat"><div class="wallet-stat-value" id="wstat-total-buy">—</div><div class="wallet-stat-label">Total Buys</div></div>'
+        f'<div class="wallet-stat"><div class="wallet-stat-value" id="wstat-total-sell">—</div><div class="wallet-stat-label">Total Sells</div></div>'
+        f'<div class="wallet-stat"><div class="wallet-stat-value" id="wstat-avg-win">—</div><div class="wallet-stat-label">Avg Win (SOL)</div></div>'
+        f'<div class="wallet-stat"><div class="wallet-stat-value" id="wstat-avg-loss">—</div><div class="wallet-stat-label">Avg Loss (SOL)</div></div>'
+        f'</div>'
+        f'<div id="positions-container" style="margin-top:20px">'
+        f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'
+        f'<h3 style="margin:0;font-size:13px;color:#7d8590">📦 MY POSITIONS</h3>'
+        f'<span id="positions-total" style="font-size:12px;color:#7d8590"></span>'
+        f'</div>'
+        f'<div class="positions-grid" id="positions-grid"></div>'
+        f'</div>'
+        # Wallet connect prompt — shown when no wallet connected
+        f'<div class="no-wallet" id="no-wallet-prompt" style="margin-top:16px;padding:16px;border:1px dashed #30363d;border-radius:8px">'
+        f'<p style="margin:0 0 8px">Connect a wallet to track your personal PnL. Wallets to copy are configured separately below.</p>'
+        f'<button class="connect-btn" style="margin-top:4px" onclick="connectPhantomWallet()">🔮 Connect Phantom</button>'
+        f'<span id="phantom-error" style="color:#f85149;font-size:12px;margin-left:12px;display:none"></span>'
+        f'</div>'
+        f'</div>'
+    )
 
     global_toggle_bg = "#da3633" if global_enabled else "#238636"
     global_toggle_text = "⏹ STOP ALL" if global_enabled else "▶️ START ALL"
@@ -671,9 +676,8 @@ async def add_copy_wallet(request: Request):
     if not addr:
         raise HTTPException(400, "Address required")
     config = load_copy_config()
-    if addr in config["copies"]:
-        del config["copies"][addr]
-        config["global_enabled"] = False
+    # user_wallet is the user's personal wallet (identity + PnL tracking).
+    # It is NOT a copy target — never add it to or remove it from copies.
     config["user_wallet"] = addr
     save_copy_config(config)
     return {"ok": True}

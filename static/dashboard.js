@@ -17,9 +17,12 @@ function switchTab(name) {
 // ── Phantom Wallet Connect ─────────────────────────────────────────────
 async function connectPhantomWallet() {
   var phantom = window.phantom && window.phantom.solana;
+  var errorEl = document.getElementById("phantom-error");
+  if (errorEl) errorEl.style.display = "none";
+  
   if (!phantom || !phantom.isPhantom) {
-    // No Phantom — use simple prompt
-    var addr = prompt('Enter your Solana wallet address:');
+    // No Phantom installed — use manual address entry
+    var addr = prompt('Phantom not detected. Enter your Solana wallet address:');
     if (addr && addr.trim()) {
       var res = await api('/api/copy/wallet', {
         method: 'POST',
@@ -27,6 +30,7 @@ async function connectPhantomWallet() {
         body: JSON.stringify({ address: addr.trim() })
       });
       if (res && res.ok) { location.reload(); }
+      else if (errorEl) { errorEl.textContent = 'Failed to set wallet'; errorEl.style.display = 'inline'; }
     }
     return;
   }
@@ -35,11 +39,13 @@ async function connectPhantomWallet() {
   try {
     await phantom.connect();
   } catch (e) {
-    // User rejected — do nothing
+    // User rejected or error — try fallback
+    if (errorEl) { errorEl.textContent = 'Connection rejected or failed'; errorEl.style.display = 'inline'; }
     return;
   }
 
   if (!phantom.publicKey) {
+    if (errorEl) { errorEl.textContent = 'No public key returned'; errorEl.style.display = 'inline'; }
     return;
   }
 
@@ -51,6 +57,8 @@ async function connectPhantomWallet() {
   });
   if (res && res.ok) {
     location.reload();
+  } else {
+    if (errorEl) { errorEl.textContent = 'Failed to save wallet'; errorEl.style.display = 'inline'; }
   }
 }
 
@@ -196,6 +204,8 @@ async function refreshWalletStats() {
   var wrEl = document.getElementById("wstat-winrate");
   var pfEl = document.getElementById("wstat-profit-factor");
   var ttEl = document.getElementById("wstat-total-trades");
+  var papEl = document.getElementById("wstat-paper");
+  var livEl = document.getElementById("wstat-live");
   var tbEl = document.getElementById("wstat-total-buy");
   var tsEl = document.getElementById("wstat-total-sell");
   var awEl = document.getElementById("wstat-avg-win");
@@ -211,6 +221,8 @@ async function refreshWalletStats() {
     pfEl.style.color = data.profit_factor >= 1 ? "#3fb950" : "#f85149";
   }
   if (ttEl) ttEl.textContent = data.total_trades;
+  if (papEl) papEl.textContent = data.paper_trades;
+  if (livEl) livEl.textContent = data.live_trades;
   if (tbEl) tbEl.textContent = data.total_buys;
   if (tsEl) tsEl.textContent = data.total_sells;
   if (awEl) awEl.textContent = data.avg_win > 0 ? "+" + data.avg_win.toFixed(4) : data.avg_win.toFixed(4);
