@@ -17,69 +17,40 @@ function switchTab(name) {
 // ── Phantom Wallet Connect ─────────────────────────────────────────────
 async function connectPhantomWallet() {
   var phantom = window.phantom && window.phantom.solana;
-  
-  // Try to connect via Phantom if available and not already connected
-  if (phantom) {
-    try {
-      if (!phantom.isConnected) {
-        var resp = await phantom.connect();
-        // phantom.connect() returns undefined on success, throws on reject
-      }
-      if (phantom.publicKey) {
-        var addr = phantom.publicKey.toString();
-        var challenge = 'Reef Scanner copy trading auth: ' + Date.now() + '|' + Math.random().toString(36).slice(2);
-        
-        try {
-          var messageBytes = new TextEncoder().encode(challenge);
-          var sigResp = await phantom.signMessage(messageBytes, 'utf8');
-          if (sigResp && sigResp.signature) {
-            var sigArray = Array.from(sigResp.signature);
-            var sigB64 = btoa(String.fromCharCode.apply(null, sigArray));
-            var res = await api('/api/wallet/verify', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ address: addr, message: challenge, signature: sigB64 })
-            });
-            if (res && res.ok) {
-              location.reload();
-              return;
-            }
-          }
-        } catch (e) {
-          console.log('Phantom sign message failed (ok if denied):', e.message || e);
-        }
-        
-        // Phantom connected but sign failed/denied — still use address-only verify
-        var res = await api('/api/copy/wallet', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ address: addr })
-        });
-        if (res && res.ok) {
-          location.reload();
-          return;
-        }
-      }
-    } catch (e) {
-      console.log('Phantom connect failed (user probably rejected):', e.message || e);
-      // Fall through to manual entry
+  if (!phantom || !phantom.isPhantom) {
+    // No Phantom — use simple prompt
+    var addr = prompt('Enter your Solana wallet address:');
+    if (addr && addr.trim()) {
+      var res = await api('/api/copy/wallet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address: addr.trim() })
+      });
+      if (res && res.ok) { location.reload(); }
     }
+    return;
   }
-  
-  // Fallback: manual address entry via prompt
-  var addr = prompt('Enter your Solana wallet address:');
-  if (addr && addr.trim()) {
-    addr = addr.trim();
-    var res = await api('/api/copy/wallet', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ address: addr })
-    });
-    if (res && res.ok) {
-      location.reload();
-    } else {
-      alert('Failed to set wallet');
-    }
+
+  // Phantom is installed — connect (opens Phantom popup)
+  try {
+    await phantom.connect();
+  } catch (e) {
+    // User rejected — do nothing
+    return;
+  }
+
+  if (!phantom.publicKey) {
+    return;
+  }
+
+  var addr = phantom.publicKey.toString();
+  var res = await api('/api/copy/wallet', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ address: addr })
+  });
+  if (res && res.ok) {
+    location.reload();
   }
 }
 
