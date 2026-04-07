@@ -10,6 +10,7 @@ Requires a keypair file (set KEYPAIR_FILE env or use data/keypair.json).
 
 import asyncio
 import csv
+import json
 import os
 import sys
 import time
@@ -47,6 +48,57 @@ KEYPAIR_LOADED = None
 POSITIONS: Dict[str, "Position"] = {}
 
 
+# ── Paper Position Tracking (for realized PnL) ──────────────────────────────
+
+PAPER_POSITIONS_FILE = DATA_DIR / "paper_positions.json"
+
+def load_paper_positions() -> Dict[str, dict]:
+    """Load open paper positions. Key = f'{source_wallet}:{token_mint}'"""
+    if not PAPER_POSITIONS_FILE.exists():
+        return {}
+    try:
+        with open(PAPER_POSITIONS_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def save_paper_positions(positions: Dict[str, dict]) -> None:
+    os.makedirs(os.path.dirname(PAPER_POSITIONS_FILE), exist_ok=True)
+    with open(PAPER_POSITIONS_FILE, "w") as f:
+        json.dump(positions, f)
+
+def record_paper_trade_pnl(trade: "CopyTrade", positions: Dict[str, dict]) -> float:
+    """Record a paper trade and compute realized PnL if closing a position.
+    
+    For BUY: record entry price in positions dict.
+    For SELL: compute realized PnL from entry price, clear position.
+    Returns realized PnL in SOL (0 if BUY or no position found).
+    """
+    key = f"{trade.source_wallet}:{trade.token_mint}"
+    
+    if trade.action == "BUY":
+        # Record entry position
+        positions[key] = {
+            "entry_price": trade.source_price_sol,
+            "scaled_amount": trade.scaled_amount_sol,
+            "timestamp": trade.timestamp,
+        }
+        return 0.0
+    
+    elif trade.action == "SELL":
+        if key not in positions:
+            return 0.0
+        pos = positions[key]
+        entry_price = pos["entry_price"]
+        scaled = pos["scaled_amount"]
+        # Realized PnL: (sell_price - entry_price) * scaled_amount
+        pnl = (trade.source_price_sol - entry_price) * scaled
+        del positions[key]
+        return pnl
+    
+    return 0.0
+
+
 # ── Copy Trade Record ────────────────────────────────────────────────────
 
 @dataclass
@@ -64,6 +116,7 @@ class CopyTrade:
     our_price_sol: float = 0.0
     status: str = "pending"   # pending, confirmed, failed, dry_run
     error: str = ""
+    realized_pnl_sol: float = 0.0  # computed when a SELL closes a paper position
 
 
 def load_copy_trades() -> List[CopyTrade]:
@@ -87,6 +140,7 @@ def load_copy_trades() -> List[CopyTrade]:
                 our_price_sol=float(row.get("our_price_sol", 0)),
                 status=row["status"],
                 error=row.get("error", ""),
+                realized_pnl_sol=float(row.get("realized_pnl_sol", 0)),
             ))
     return trades
 
@@ -98,7 +152,7 @@ def save_copy_trade(trade: CopyTrade) -> None:
             "timestamp", "source_wallet", "source_sig", "our_wallet",
             "our_sig", "action", "token_mint", "amount_sol",
             "scaled_amount_sol", "source_price_sol", "our_price_sol",
-            "status", "error",
+            "status", "error", "realized_pnl_sol",
         ])
         if not file_exists:
             writer.writeheader()
@@ -116,6 +170,7 @@ def save_copy_trade(trade: CopyTrade) -> None:
             "our_price_sol": round(trade.our_price_sol, 9),
             "status": trade.status,
             "error": trade.error,
+            "realized_pnl_sol": round(trade.realized_pnl_sol, 9),
         })
 
 
@@ -254,6 +309,7 @@ async def check_wallet_for_new_trades(
     wallet_addr: str,
     entry: CopyEntry,
     our_wallet: str,
+    paper_positions: Dict[str, dict],
 ) -> List[CopyTrade]:
     """Check a wallet for new trades since last_sig"""
     global POSITIONS
@@ -306,8 +362,11 @@ async def check_wallet_for_new_trades(
 
             # Pure copy: ALWAYS follow source wallet. If they buy, we buy. If they sell, we sell.
             if DRY_RUN:
+                # Compute realized PnL for SELLs (closes open BUY position)
+                trade.realized_pnl_sol = record_paper_trade_pnl(trade, paper_positions)
                 print(f"    🐸 DRY RUN: copy {swap.action} {swap.amount_sol:.4f} SOL "
-                      f"(alloc {entry.alloc_sol:.4f}) of {swap.token_mint[:16]}...")
+                      f"(alloc {entry.alloc_sol:.4f}) of {swap.token_mint[:16]}..."
+                      + (f" | realized pnl: {trade.realized_pnl_sol:+.9f}" if trade.realized_pnl_sol != 0 else ""))
                 trade.status = "dry_run"
                 save_copy_trade(trade)
                 new_trades.append(trade)
@@ -331,6 +390,9 @@ async def run_engine_cycle(config: CopyConfig) -> int:
     if config.user_wallet:
         POSITIONS = await refresh_positions(POSITIONS, config.user_wallet)
 
+    # Load paper positions for realized PnL tracking
+    paper_positions = load_paper_positions()
+
     enabled_copies = {addr: e for addr, e in config.copies.items() if e.enabled}
     # Filter out self-copy (user's own wallet wouldn't generate new trades anyway,
     # but this also prevents the confusing skip message on every poll cycle)
@@ -344,7 +406,7 @@ async def run_engine_cycle(config: CopyConfig) -> int:
     for wallet_addr, entry in enabled_copies.items():
         try:
             trades = await check_wallet_for_new_trades(
-                wallet_addr, entry, config.user_wallet
+                wallet_addr, entry, config.user_wallet, paper_positions
             )
             total += len(trades)
 
@@ -359,6 +421,7 @@ async def run_engine_cycle(config: CopyConfig) -> int:
 
     if total > 0 or sigs_updated:
         save_copy_config(config)
+        save_paper_positions(paper_positions)
 
     return total
 

@@ -495,11 +495,17 @@ def build_dashboard_html() -> str:
     else:
         log_html = "<p class='neutral'>No cron log</p>"
 
-    # Stats section — always shown, populated by JS when on copy tab
-    # When wallet is connected: shows personal PnL stats
-    # When no wallet: shows aggregate copy trading stats
-    wallet_id_label = f'<span class="addr" style="font-size:12px">{user_wallet}</span>' if user_wallet else '<span class="neutral" style="font-size:12px">Not connected</span>'
-    wallet_heading = f'👛 MY WALLET' if user_wallet else '📊 COPY TRADING STATS'
+    # Stats section — always shown. Paper trading mode shows aggregate stats.
+    # Rename heading based on trade mode and wallet state.
+    if user_wallet:
+        wallet_heading = f'👛 MY WALLET'
+        wallet_id_label = f'<span class="addr" style="font-size:12px">{user_wallet}</span>'
+    elif trade_mode == "paper":
+        wallet_heading = '🐸 PAPER TRADING'
+        wallet_id_label = '<span class="neutral" style="font-size:12px">Copy trading simulation</span>'
+    else:
+        wallet_heading = '📊 COPY TRADING STATS'
+        wallet_id_label = '<span class="neutral" style="font-size:12px">Not connected</span>'
     
     wallet_section = (
         f'<div class="section">'
@@ -514,7 +520,7 @@ def build_dashboard_html() -> str:
         f'</div>'
         # Stats grid — always rendered, IDs used by refreshWalletStats()
         f'<div class="wallet-stats-grid" id="wallet-stats-grid">'
-        f'<div class="wallet-stat"><div class="wallet-stat-value" id="wstat-pnl">—</div><div class="wallet-stat-label">Total PnL (SOL)</div></div>'
+        f'<div class="wallet-stat"><div class="wallet-stat-value" id="wstat-pnl">—</div><div class="wallet-stat-label">Realized PnL (SOL)</div></div>'
         f'<div class="wallet-stat"><div class="wallet-stat-value" id="wstat-winrate">—</div><div class="wallet-stat-label">Win Rate</div></div>'
         f'<div class="wallet-stat"><div class="wallet-stat-value" id="wstat-profit-factor">—</div><div class="wallet-stat-label">Profit Factor</div></div>'
         f'<div class="wallet-stat"><div class="wallet-stat-value" id="wstat-total-trades">—</div><div class="wallet-stat-label">Total Trades</div></div>'
@@ -532,11 +538,9 @@ def build_dashboard_html() -> str:
         f'</div>'
         f'<div class="positions-grid" id="positions-grid"></div>'
         f'</div>'
-        # Wallet connect prompt — shown when no wallet connected
-        f'<div class="no-wallet" id="no-wallet-prompt" style="margin-top:16px;padding:16px;border:1px dashed #30363d;border-radius:8px">'
-        f'<p style="margin:0 0 8px">Connect a wallet to track your personal PnL. Wallets to copy are configured separately below.</p>'
-        f'<button class="connect-btn" style="margin-top:4px" onclick="connectPhantomWallet()">🔮 Connect Phantom</button>'
-        f'<span id="phantom-error" style="color:#f85149;font-size:12px;margin-left:12px;display:none"></span>'
+        # Note about connecting wallet (no button — behind-the-scenes later)
+        f'<div style="margin-top:16px;padding:12px;border:1px dashed #30363d;border-radius:8px">'
+        f'<span class="neutral" style="font-size:12px">Connect a wallet to track personal PnL. Wallet connection will be added behind the scenes.</span>'
         f'</div>'
         f'</div>'
     )
@@ -874,10 +878,12 @@ async def verify_wallet(request: Request):
 
 @app.get("/api/wallet/stats")
 async def get_wallet_stats():
-    """Compute PnL stats from copy_trades.csv for the user's wallet.
+    """Compute stats from copy_trades.csv using realized PnL from closed positions.
     
-    When user_wallet is not set, shows aggregated stats across all copy trades
-    (paper + live) so the user can see performance even without a configured wallet.
+    For paper trades (dry_run): realized_pnl_sol is set when a SELL closes an open BUY.
+    For live trades: also computed from realized_pnl_sol when SELL closes position.
+    
+    When user_wallet is not set, aggregates across ALL copy trades.
     """
     copy_config = load_copy_config()
     user_wallet = copy_config.get("user_wallet", "") or ""
@@ -901,14 +907,12 @@ async def get_wallet_stats():
             "paper_trades": 0, "live_trades": 0
         })
     
-    # If user_wallet is set, only count that wallet's trades.
-    # Otherwise aggregate ALL trades so we can see performance without a configured wallet.
+    # Filter to relevant trades
     if user_wallet:
         our_trades = [t for t in all_trades
                       if t.get("our_wallet") == user_wallet
                       and t.get("status") in ("confirmed", "dry_run")]
     else:
-        # Show all trades (paper + live) when no user wallet is configured
         our_trades = [t for t in all_trades
                       if t.get("status") in ("confirmed", "dry_run")]
     
@@ -931,41 +935,69 @@ async def get_wallet_stats():
     paper_trades = 0
     live_trades = 0
     
+    # Track open paper positions (key = f"{source_wallet}:{token_mint}")
+    # to compute unrealized PnL from BUY entries still open
+    paper_positions: Dict[str, dict] = {}
+    
     for t in our_trades:
         action = t.get("action", "")
+        status = t.get("status", "")
+        scaled = float(t.get("scaled_amount_sol", 0) or 0)
+        
         if action == "BUY":
             total_buys += 1
+            if status == "dry_run":
+                paper_trades += 1
+                # Track open paper position for unrealized PnL
+                key = f"{t.get('source_wallet')}:{t.get('token_mint')}"
+                paper_positions[key] = {
+                    "entry_price": float(t.get("source_price_sol", 0) or 0),
+                    "scaled_amount": scaled,
+                }
+            else:
+                live_trades += 1
+        
         elif action == "SELL":
             total_sells += 1
-        
-        source_price = float(t.get("source_price_sol", 0) or 0)
-        our_price = float(t.get("our_price_sol", 0) or 0)
-        scaled = float(t.get("scaled_amount_sol", 0) or 0)
-        status = t.get("status", "")
-        
-        if status == "dry_run":
-            paper_trades += 1
-            continue  # Paper trades — no real PnL data
-        
-        # Live trade — both prices available
-        live_trades += 1
-        if action == "SELL" and source_price > 0 and our_price > 0:
-            pnl = (source_price - our_price) * scaled
-            total_pnl += pnl
-            if pnl > 0: wins += 1; total_wins += pnl
-            else: losses += 1; total_losses += abs(pnl)
-        elif action == "BUY" and source_price > 0 and our_price > 0:
-            pnl = (our_price - source_price) * scaled
-            total_pnl += pnl
-            if pnl > 0: wins += 1; total_wins += pnl
-            else: losses += 1; total_losses += abs(pnl)
+            if status == "dry_run":
+                paper_trades += 1
+            else:
+                live_trades += 1
+            
+            # Realized PnL: use realized_pnl_sol column (set by engine when position closed)
+            realized_pnl = float(t.get("realized_pnl_sol", 0) or 0)
+            
+            if realized_pnl != 0:
+                # Position was closed — we have a definitive PnL
+                total_pnl += realized_pnl
+                if realized_pnl > 0:
+                    wins += 1
+                    total_wins += realized_pnl
+                else:
+                    losses += 1
+                    total_losses += abs(realized_pnl)
+            else:
+                # No realized_pnl (e.g., old trades or no matching open position)
+                # Fall back to price comparison for live trades
+                if status != "dry_run":
+                    source_price = float(t.get("source_price_sol", 0) or 0)
+                    our_price = float(t.get("our_price_sol", 0) or 0)
+                    if source_price > 0 and our_price > 0:
+                        pnl = (source_price - our_price) * scaled
+                        total_pnl += pnl
+                        if pnl > 0:
+                            wins += 1
+                            total_wins += pnl
+                        else:
+                            losses += 1
+                            total_losses += abs(pnl)
     
-    # Win rate based on live trades only (paper trades are "pending" realisation)
-    live_total = wins + losses
-    win_rate = (wins / live_total * 100) if live_total > 0 else 0
-    avg_win = (total_wins / wins) if wins > 0 else 0
-    avg_loss = (total_losses / losses) if losses > 0 else 0
-    profit_factor = (total_wins / total_losses) if total_losses > 0 else (total_wins if total_wins > 0 else 0)
+    # Compute stats from closed positions (wins + losses)
+    closed_total = wins + losses
+    win_rate = (wins / closed_total * 100) if closed_total > 0 else 0.0
+    avg_win = (total_wins / wins) if wins > 0 else 0.0
+    avg_loss = (total_losses / losses) if losses > 0 else 0.0
+    profit_factor = (total_wins / total_losses) if total_losses > 0 else (total_wins if total_wins > 0 else 0.0)
     
     return JSONResponse({
         "pnl_sol": round(total_pnl, 6),
