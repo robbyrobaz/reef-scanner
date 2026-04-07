@@ -345,17 +345,24 @@ document.addEventListener("change", function(e){
   var row = e.target.closest("tr");
   var allocInput = row ? row.querySelector(".alloc-input") : null;
   var alloc = allocInput ? parseFloat(allocInput.value) || 0.01 : 0.01;
-  var currentlyEnabled = e.target.checked;
-  
-  // Update the toggle button to match
+  var desiredEnabled = e.target.checked;
+
+  // Only mark pending if this changes the SAVED state (not just re-checking current state)
   var toggleBtn = row ? row.querySelector(".toggle-btn") : null;
-  if (toggleBtn) {
-    toggleBtn.className = "toggle-btn " + (currentlyEnabled ? "on" : "off");
-    toggleBtn.textContent = currentlyEnabled ? "ON" : "OFF";
+  var currentlySaved = toggleBtn ? toggleBtn.classList.contains("on") : false;
+  if (desiredEnabled === currentlySaved) {
+    // No change from saved state — remove any stale pending entry
+    delete pendingChanges[addr];
+  } else {
+    markPending(addr, desiredEnabled, alloc);
   }
-  row.style.background = currentlyEnabled ? "#1c2d1a" : "";
-  
-  markPending(addr, currentlyEnabled, alloc);
+
+  // Preview toggle button state
+  if (toggleBtn) {
+    toggleBtn.className = "toggle-btn " + (desiredEnabled ? "on" : "off");
+    toggleBtn.textContent = desiredEnabled ? "ON" : "OFF";
+  }
+  row.style.background = desiredEnabled ? "#1c2d1a" : "";
 });
 
 // ── Utils ──────────────────────────────────────────────────────────────
@@ -401,7 +408,7 @@ async function savePendingChanges() {
     return api("/api/copy/wallet/" + addr + "/toggle", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ alloc: info.alloc })
+      body: JSON.stringify({ enabled: info.enabled, alloc: info.alloc })
     });
   });
   

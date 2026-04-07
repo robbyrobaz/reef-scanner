@@ -691,13 +691,20 @@ async def add_copy_wallet(request: Request):
 async def toggle_wallet_copy(addr: str, request: Request):
     body = await request.json()
     alloc = float(body.get("alloc", 0.01))
+    explicit_enabled = body.get("enabled")  # None = toggle, True/False = set explicitly
     config = load_copy_config()
     if addr not in config["copies"]:
         config["copies"][addr] = {"enabled": True, "alloc_sol": alloc, "last_sig": "", "last_copy_ts": 0}
     else:
-        config["copies"][addr]["enabled"] = not config["copies"][addr]["enabled"]
-        if config["copies"][addr]["enabled"]:
+        if explicit_enabled is not None:
+            # Explicit state from checkbox/save — set directly
+            config["copies"][addr]["enabled"] = explicit_enabled
             config["copies"][addr]["alloc_sol"] = alloc
+        else:
+            # Direct toggle button click — flip
+            config["copies"][addr]["enabled"] = not config["copies"][addr]["enabled"]
+            if config["copies"][addr]["enabled"]:
+                config["copies"][addr]["alloc_sol"] = alloc
     save_copy_config(config)
     return {"ok": True, "enabled": config["copies"][addr]["enabled"]}
 
