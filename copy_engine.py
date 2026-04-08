@@ -241,17 +241,32 @@ async def execute_copy_trade(trade: CopyTrade) -> bool:
         print(f"    ⚠️  No keypair — cannot execute real trades")
         return False
     
+    SOL_MINT = "So11111111111111111111111111111111111111112"
+
     try:
-        # Use PumpPortal for all trades (handles pump, raydium, pump-amm via pool=auto)
+        # Try PumpPortal first (bonding curve tokens)
         result = await execute_pumpfun_swap(
             KEYPAIR_LOADED,
-            trade.action.lower(),       # "buy" or "sell"
+            trade.action.lower(),
             trade.token_mint,
             trade.scaled_amount_sol,
-            slippage=15,                # 15% for memecoins
+            slippage=15,
             priority_fee=0.005,
             pool="auto",
         )
+        
+        # If PumpPortal fails (graduated token), fall back to Jupiter
+        if not result.success and "400" in (result.error or ""):
+            if trade.action == "BUY":
+                result = await execute_swap_legacy(
+                    KEYPAIR_LOADED, SOL_MINT, trade.token_mint,
+                    trade.scaled_amount_sol, slippage_bps=200,
+                )
+            else:
+                result = await execute_swap_legacy(
+                    KEYPAIR_LOADED, trade.token_mint, SOL_MINT,
+                    trade.scaled_amount_sol, slippage_bps=200,
+                )
         
         if result.success:
             trade.our_sig = result.signature
