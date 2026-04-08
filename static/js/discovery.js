@@ -8,6 +8,20 @@ export const discovery = {
   swapsPage: 1,
   swapsPerPage: 50,
   swapTokenFilter: '',
+
+  async addToCopy(addr) {
+    try {
+      await api('/api/copy/wallet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address: addr, alloc_sol: 0.01 }),
+      });
+      const btns = document.querySelectorAll(`[onclick*="discovery.addToCopy('${addr}')"]`);
+      btns.forEach(b => { b.textContent = '✓ Added'; b.disabled = true; b.className = 'btn btn-ghost btn-small'; });
+    } catch(e) {
+      alert('Failed to add wallet: ' + e.message);
+    }
+  },
 };
 
 // ── Top wallet banner ─────────────────────────────────────────────────────────
@@ -74,22 +88,6 @@ export async function loadTopWallets() {
   } catch(e) {
     document.getElementById('top-wallets-body').innerHTML =
       `<tr><td colspan="9" class="empty">Failed to load wallets</td></tr>`;
-  }
-}
-
-export async function addToCopy(addr) {
-  try {
-    await api('/api/copy/wallet', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ address: addr, alloc_sol: 0.01 }),
-    });
-    // Visual feedback: briefly highlight the button
-    const btns = document.querySelectorAll(`[onclick="discovery.addToCopy('${addr}')"]`);
-    btns.forEach(b => { b.textContent = '✓ Added'; b.disabled = true; b.className = 'btn btn-ghost btn-small'; });
-  } catch(e) {
-    alert('Failed to add wallet: ' + e.message);
-  }
 }
 
 // ── Recent Swaps ───────────────────────────────────────────────────────────────
@@ -188,3 +186,6 @@ export function startRefresh() {
     }
   }, 30000);
 }
+
+// ── Expose to global scope for onclick handlers ───────────────────────────────
+window.discovery = discovery;

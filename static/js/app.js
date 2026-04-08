@@ -54,7 +54,12 @@ export function scheduleRefresh(fn, interval = 10000) {
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 import { refresh as discoveryRefresh } from './discovery.js';
-import * as copyTrading from './copy-trading.js';
+import * as _discovery from './discovery.js';
+import copyTrading from './copy-trading.js';
+
+// Expose to window for onclick handlers
+window.copyTrading = copyTrading;
+window.discovery = _discovery;
 
 export async function init() {
   startUptime();

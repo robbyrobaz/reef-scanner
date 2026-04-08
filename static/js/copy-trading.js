@@ -151,20 +151,18 @@ async function renderEnabledCopies() {
 
 // ── Add Wallet UI ──────────────────────────────────────────────────────────────
 function renderAddWalletUI() {
-  const wrap = document.getElementById('add-wallet-row');
+  const wrap = document.getElementById('add-wallet-container');
   if (!wrap) return;
   wrap.innerHTML = `
-    <td colspan="5" style="padding:8px 0;">
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-        <input type="text" id="add-wallet-addr" placeholder="Solana wallet address (e.g. 7xKX...)"
-          style="flex:1;min-width:200px;padding:6px 10px;border-radius:6px;border:1px solid #30363d;background:#0d1117;color:#e6edf3;font-size:13px;font-family:monospace;">
-        <input type="number" id="add-wallet-alloc" value="0.01" step="0.001" min="0.001"
-          style="width:90px;padding:6px 8px;border-radius:6px;border:1px solid #30363d;background:#0d1117;color:#e6edf3;font-size:13px;">
-        <span style="color:var(--muted);font-size:12px;">SOL alloc</span>
-        <button class="btn btn-primary btn-small" onclick="copyTrading.addWallet()">+ Add Wallet</button>
-        <span id="add-wallet-msg" class="msg" style="margin-left:8px;"></span>
-      </div>
-    </td>`;
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <input type="text" id="add-wallet-addr" placeholder="Solana wallet address (e.g. 7xKX...)"
+        style="flex:1;min-width:200px;padding:6px 10px;border-radius:6px;border:1px solid #30363d;background:#0d1117;color:#e6edf3;font-size:13px;font-family:monospace;">
+      <input type="number" id="add-wallet-alloc" value="0.01" step="0.001" min="0.001"
+        style="width:90px;padding:6px 8px;border-radius:6px;border:1px solid #30363d;background:#0d1117;color:#e6edf3;font-size:13px;">
+      <span style="color:var(--muted);font-size:12px;">SOL alloc</span>
+      <button class="btn btn-primary btn-small" onclick="copyTrading.addWallet()">+ Add Wallet</button>
+      <span id="add-wallet-msg" class="msg" style="margin-left:8px;"></span>
+    </div>`;
 }
 
 export async function addWallet() {
@@ -274,3 +272,6 @@ export function timeAgo(ts) {
   const days = Math.floor(hrs / 24);
   return `${days}d ago`;
 }
+
+// ── Expose to global scope for onclick handlers ───────────────────────────────
+window.copyTrading = copyTrading;

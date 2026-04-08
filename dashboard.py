@@ -86,36 +86,9 @@ def load_positions():
 
 # ── Compute stats ──────────────────────────────────────────────────────────────
 def compute_stats():
-    wallets = load_wallets_csv(limit=50)
-    recent_swaps = load_swaps_csv(limit=50)  # last 50 for recent-swaps table
-    all_swaps = load_swaps_csv(limit=1000000)  # all for accurate totals
-
-    buys = sum(1 for s in all_swaps if s.get("action", "").upper() == "BUY")
-    sells = sum(1 for s in all_swaps if s.get("action", "").upper() == "SELL")
-
-    dex_counts = {}
-    for s in all_swaps:
-        dex = s.get("dex", "unknown").lower()
-        dex_counts[dex] = dex_counts.get(dex, 0) + 1
-
-    # Top wallet
-    top = wallets[0] if wallets else None
-
-    # Last scan time = most recent swap time
-    last_scan = all_swaps[-1].get("block_time", "") if all_swaps else ""
-
-    return {
-        "total_wallets": _count_wallets(),
-        "qualified_wallets": _count_qualified(),
-        "total_swaps": _count_swaps(),
-        "buys": buys,
-        "sells": sells,
-        "dex_counts": dex_counts,
-        "top_wallets": wallets[:50],
-        "top_wallet": top,
-        "last_scan": last_scan,
-        "recent_swaps": list(reversed(recent_swaps)),
-    }
+    """Use fast SQL-based db.get_stats() for all aggregations."""
+    from db import get_stats
+    return get_stats()
 
 def _count_wallets():
     from db import wallet_count

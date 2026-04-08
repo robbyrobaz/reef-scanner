@@ -1,14 +1,10 @@
-"""
-DuckDB database layer for Reef Scanner.
-Single-file DB, no server, ~10-100x faster than CSV for analytical queries.
-"""
-import os
+from pathlib import Path
+from datetime import datetime, timedelta, timezone
 import duckdb
 import pandas as pd
-from pathlib import Path
 
+DB_PATH = Path(__file__).parent / "data" / "reef.db"
 DATA_DIR = Path(__file__).parent / "data"
-DB_PATH = DATA_DIR / "reef.db"
 
 _conn = None
 
@@ -52,32 +48,36 @@ def init_db():
             token_mint  TEXT,
             action      TEXT,
             amount      DOUBLE,
-            amount_sol  DOUBLE,
+            amount_sol   DOUBLE,
             price_sol   DOUBLE,
             slot        BIGINT,
             block_time  BIGINT,
-            fee         BIGINT
+            fee         BIGINT,
+            solscan_sig TEXT DEFAULT ''
         )
     """)
-    con.execute("CREATE INDEX IF NOT EXISTS idx_swaps_wallet ON swaps(wallet)")
-    con.execute("CREATE INDEX IF NOT EXISTS idx_swaps_block_time ON swaps(block_time)")
-
+    # Add missing columns to existing table
+    try:
+        con.execute("ALTER TABLE swaps ADD COLUMN solscan_sig TEXT DEFAULT ''")
+    except Exception:
+        pass  # column already exists
     con.execute("""
         CREATE TABLE IF NOT EXISTS wallets (
-            address             TEXT PRIMARY KEY,
-            score               DOUBLE,
-            total_trades        INTEGER,
-            win_rate            DOUBLE,
-            profit_factor       DOUBLE,
-            avg_roi             DOUBLE,
-            best_roi            DOUBLE,
-            worst_roi           DOUBLE,
-            avg_hold_minutes    INTEGER,
-            last_active         TEXT,
-            favorite_token      TEXT,
-            solscan_link        TEXT
+            address          TEXT PRIMARY KEY,
+            score            DOUBLE,
+            total_trades     INTEGER,
+            win_rate         DOUBLE,
+            profit_factor    DOUBLE,
+            avg_roi          DOUBLE,
+            best_roi         DOUBLE,
+            worst_roi        DOUBLE,
+            avg_hold_minutes INTEGER,
+            last_active      TEXT,
+            favorite_token  TEXT,
+            solscan_link     TEXT
         )
     """)
+    con.execute("CREATE INDEX IF NOT EXISTS idx_swaps_block_time ON swaps(block_time)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_wallets_score ON wallets(score)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_wallets_pf ON wallets(profit_factor)")
 
@@ -94,48 +94,31 @@ def insert_swaps(swaps: list):
         "dex":        s.dex,
         "token_mint": s.token_mint,
         "action":     s.action,
-        "amount":     s.amount,
-        "amount_sol": s.amount_sol,
-        "price_sol":  s.price_sol,
-        "slot":       s.slot,
-        "block_time": s.block_time,
-        "fee":        s.fee,
+        "amount":     float(s.amount) if s.amount else 0,
+        "amount_sol": float(s.amount_sol) if s.amount_sol else 0,
+        "price_sol":  float(s.price_sol) if s.price_sol else 0,
+        "slot":       s.slot or 0,
+        "block_time": s.block_time or 0,
+        "fee":        s.fee or 0,
+        "solscan_sig": f"https://solscan.io/tx/{s.signature}" if s.signature else "",
     } for s in swaps]
     df = pd.DataFrame(rows)
-    con.execute("INSERT INTO swaps BY NAME SELECT * FROM df ON CONFLICT (signature) DO NOTHING")
+    con.execute("INSERT OR IGNORE INTO swaps BY NAME SELECT * FROM df")
 
 def get_swaps_df() -> pd.DataFrame:
-    """Get all swaps as DataFrame."""
     return get_db().execute("SELECT * FROM swaps ORDER BY block_time DESC").df()
 
 def get_all_swaps_list() -> list:
-    """Get all swaps as list of ParsedSwap objects (for scanner compatibility)."""
-    df = get_swaps_df()
-    from swap_parser import ParsedSwap
-    swaps = []
-    for _, row in df.iterrows():
-        try:
-            swaps.append(ParsedSwap(
-                wallet=row.wallet,
-                signature=row.signature,
-                dex=row.dex,
-                token_mint=row.token_mint,
-                action=row.action,
-                amount=float(row.amount),
-                amount_sol=float(row.amount_sol),
-                price_sol=float(row.price_sol),
-                slot=int(row.slot),
-                block_time=int(row.block_time),
-                fee=int(row.fee) if pd.notna(row.fee) else 0,
-            ))
-        except:
-            continue
-    return swaps
+    rows = get_db().execute("SELECT * FROM swaps ORDER BY block_time DESC").fetchall()
+    cols = [d[0] for d in get_db().description]
+    return [dict(zip(cols, r)) for r in rows]
 
 def get_recent_swaps(limit: int = 50) -> pd.DataFrame:
-    """Get most recent swaps."""
+    """Get most recent swaps (capped for performance)."""
+    cap = min(limit, 100)
     return get_db().execute(
-        f"SELECT * FROM swaps ORDER BY block_time DESC LIMIT {limit}"
+        f"SELECT signature, wallet, dex, token_mint, action, amount, amount_sol, price_sol, slot, block_time, fee, solscan_sig "
+        f"FROM swaps ORDER BY block_time DESC LIMIT {cap}"
     ).df()
 
 def swap_count() -> int:
@@ -170,9 +153,12 @@ def save_wallets(wallets: list):
     con.execute("INSERT INTO wallets SELECT * FROM df")
 
 def get_top_wallets(limit: int = 50) -> pd.DataFrame:
-    """Top wallets by score."""
+    """Top wallets by score (capped for performance)."""
+    cap = min(limit, 20)
     return get_db().execute(
-        f"SELECT * FROM wallets ORDER BY score DESC LIMIT {limit}"
+        f"SELECT address, score, total_trades, win_rate, profit_factor, avg_roi, best_roi, worst_roi, "
+        f"avg_hold_minutes, last_active, favorite_token, solscan_link "
+        f"FROM wallets ORDER BY score DESC LIMIT {cap}"
     ).df()
 
 def get_qualified_wallets() -> pd.DataFrame:
@@ -191,40 +177,45 @@ def wallet_count() -> tuple[int, int]:
 # ── Dashboard stats ────────────────────────────────────────────────────────────
 
 def get_stats() -> dict:
-    """Compute dashboard stats from DuckDB (fast — uses indexes)."""
+    """Compute dashboard stats from DuckDB. Uses LIMIT caps + indexes for speed."""
     con = get_db()
+
+    # Fast counts (COUNT with index hint is fast in DuckDB)
     swap_ct = con.execute("SELECT COUNT(*) FROM swaps").fetchone()[0]
     total_w, qual_w = wallet_count()
-
     buys  = con.execute("SELECT COUNT(*) FROM swaps WHERE action = 'BUY'").fetchone()[0]
     sells = con.execute("SELECT COUNT(*) FROM swaps WHERE action = 'SELL'").fetchone()[0]
 
-    # DEX breakdown
-    dex_rows = con.execute("SELECT dex, COUNT(*) FROM swaps GROUP BY dex ORDER BY COUNT(*) DESC").fetchall()
+    # DEX breakdown (fast with GROUP BY)
+    dex_rows = con.execute(
+        "SELECT dex, COUNT(*) as ct FROM swaps GROUP BY dex ORDER BY ct DESC LIMIT 5"
+    ).fetchall()
     dex_counts = {dex: ct for dex, ct in dex_rows}
 
-    # Last scan time (max block_time)
+    # Last scan time
     last_st = con.execute("SELECT MAX(block_time) FROM swaps").fetchone()[0] or 0
 
-    # Top 50 wallets for table
-    top_wallets = get_top_wallets(50).to_dict("records")
+    # Top 10 wallets (capped — don't need 50 for the UI table)
+    top_wallets = get_top_wallets(10).to_dict("records")
+    top_wallet = top_wallets[0] if top_wallets else None
 
-    # Recent swaps
-    recent_swaps = get_recent_swaps(50).to_dict("records")
+    # Recent 25 swaps (capped — don't need 50)
+    recent_swaps = get_recent_swaps(25).to_dict("records")
 
     return {
-        "total_swaps":    swap_ct,
-        "total_wallets":  total_w,
+        "total_swaps":      swap_ct,
+        "total_wallets":    total_w,
         "qualified_wallets": qual_w,
-        "buys":           buys,
-        "sells":          sells,
-        "dex_counts":     dex_counts,
-        "last_scan":      last_st,
-        "top_wallets":    top_wallets,
-        "recent_swaps":   recent_swaps,
+        "buys":             buys,
+        "sells":            sells,
+        "dex_counts":       dex_counts,
+        "last_scan":        last_st,
+        "top_wallet":       top_wallet,
+        "top_wallets":      top_wallets,
+        "recent_swaps":     recent_swaps,
     }
 
-# ── Migration from CSV ────────────────────────────────────────────────────────
+# ── Migration from CSV ─────────────────────────────────────────────────────────
 
 def migrate_from_legacy():
     """One-time: import existing legacy CSV data into DuckDB."""
@@ -235,25 +226,16 @@ def migrate_from_legacy():
     if swaps_csv.exists():
         n = con.execute(f"SELECT COUNT(*) FROM swaps").fetchone()[0]
         if n == 0:
-            df = pd.read_csv(swaps_csv)
-            con.execute("INSERT INTO swaps SELECT * FROM df ON CONFLICT (signature) DO NOTHING")
-            print(f"  Migrated {len(df)} swaps into DuckDB")
+            df = pd.read_csv(swaps_csv, parse_dates=["block_time"])
+            df["block_time"] = df["block_time"].astype("int64") // 1_000_000_000
+            con.execute("INSERT INTO swaps SELECT * FROM df")
+            print(f"  Migrated {len(df)} swaps from CSV")
 
     if wallets_csv.exists():
         n = con.execute("SELECT COUNT(*) FROM wallets").fetchone()[0]
         if n == 0:
             df = pd.read_csv(wallets_csv)
-            con.execute("DELETE FROM wallets")
             con.execute("INSERT INTO wallets SELECT * FROM df")
-            print(f"  Migrated {len(df)} wallets into DuckDB")
+            print(f"  Migrated {len(df)} wallets from CSV")
 
-def backup_legacy_csvs():
-    """Archive original CSVs (run after migration)."""
-    import shutil, datetime
-    ts = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-    for name in ["swaps.csv", "wallets.csv"]:
-        src = DATA_DIR / name
-        dst = DATA_DIR / f"{name}.legacy.{ts}"
-        if src.exists():
-            shutil.copy2(src, dst)
-            print(f"  Backed up {name} → {dst.name}")
+    con.execute("COMMIT")
