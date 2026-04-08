@@ -64,7 +64,7 @@ export async function loadTopWallets() {
         <td>${pf}</td>
         <td class="${Number(w.avg_roi)>=0?'pos':'neg'}">${roi}%</td>
         <td class="sm">${w.favorite_token || '—'}</td>
-        <td class="sm">${w.last_active ? timeAgo(new Date(w.last_active).getTime() / 1000) : '—'}</td>
+        <td class="sm">${w.last_active ? timeAgo(new Date(w.last_active).getTime()) : '—'}</td>
       </tr>`;
     }).join('');
   } catch(e) {
