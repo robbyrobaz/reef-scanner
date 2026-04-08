@@ -50,7 +50,7 @@ POSITIONS: Dict[str, "Position"] = {}
 
 # ── Paper Position Tracking (for realized PnL) ──────────────────────────────
 
-PAPER_POSITIONS_FILE = DATA_DIR / "paper_positions.json"
+PAPER_POSITIONS_FILE = Path(DATA_DIR) / "paper_positions.json"
 
 def load_paper_positions() -> Dict[str, dict]:
     """Load open paper positions. Key = f'{source_wallet}:{token_mint}'"""
@@ -440,6 +440,10 @@ async def run_engine():
     # --live flag overrides config; otherwise use config
     cli_live = "--live" in sys.argv
     DRY_RUN = not cli_live and trade_mode != "live"
+    
+    # Sync swap_executor's DRY_RUN flag so actual swaps execute
+    import swap_executor
+    swap_executor.DRY_RUN = DRY_RUN
     
     print(f"   Mode: {'🐸 DRY RUN (PAPER)' if DRY_RUN else '🔴 LIVE — REAL TRADES'}")
     if cli_live:
