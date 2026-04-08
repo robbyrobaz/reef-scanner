@@ -36,7 +36,7 @@ DRY_RUN = True
 JUPITER_QUOTE_API = "https://quote-api.jup.ag/v6/quote"
 JUPITER_SWAP_API = "https://quote-api.jup.ag/v6/swap"
 JUPITER_PRICE_API = "https://quote-api.jup.ag/v6/price"
-SOL_MINT = "So11111111111111111111111111111111111111111112"
+SOL_MINT = "So11111111111111111111111111111111111111112"
 HELIUS_TX_URL = f"https://api.helius.xyz/v0/addresses/push?api-key={HELIUS_API_KEY}"
 
 KEYPAIR_FILE = os.path.expanduser(
@@ -254,7 +254,7 @@ async def execute_swap(
     amount_lamports = int(amount_sol * 1e9)
     
     # If input is SOL, use wrapped SOL mint
-    if input_mint == "SOL" or input_mint == "So11111111111111111111111111111111111111111112":
+    if input_mint == "SOL" or input_mint == SOL_MINT:
         input_mint = SOL_MINT
     
     # Get quote
@@ -361,40 +361,55 @@ async def execute_swap_legacy(
             
             # Parse the legacy transaction
             from solders.transaction import Transaction
+            from solders.hash import Hash
             tx = Transaction.from_bytes(tx_bytes)
             
-            # Sign with our keypair
-            signed_tx = tx.sign([keypair])
+            # Get fresh blockhash for signing
+            async with session.post(
+                HELIUS_RPC_URL,
+                json={
+                    "jsonrpc": "2.0", "id": 1,
+                    "method": "getLatestBlockhash",
+                    "params": [{"commitment": "confirmed"}],
+                },
+                timeout=aiohttp.ClientTimeout(total=5),
+            ) as bh_resp:
+                if bh_resp.status != 200:
+                    return SwapResult(success=False, error="Failed to get blockhash")
+                bh_data = await bh_resp.json()
+                blockhash_str = bh_data["result"]["value"]["blockhash"]
+                recent_blockhash = Hash.from_string(blockhash_str)
+            
+            # Sign with our keypair (mutates tx in place)
+            tx.sign([keypair], recent_blockhash)
             
             # Send
-            import aiohttp
-            async with aiohttp.ClientSession() as sess:
-                async with sess.post(
-                    HELIUS_RPC_URL,
-                    json={
-                        "jsonrpc": "2.0",
-                        "id": 1,
-                        "method": "sendTransaction",
-                        "params": [
-                            base64.b64encode(bytes(signed_tx)).decode(),
-                            {"encoding": "base64", "skipPreFlight": False},
-                        ],
-                    },
-                    timeout=aiohttp.ClientTimeout(total=30),
-                ) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        if "result" in data:
-                            return SwapResult(
-                                success=True,
-                                signature=data["result"],
-                                input_amount=amount_sol,
-                                price_sol=float(quote.get("inAmount", 0)) / max(int(quote.get("outAmount", 1)), 1) / 1e9,
-                            )
-                        elif "error" in data:
-                            return SwapResult(success=False, error=str(data["error"]))
-                    else:
-                        return SwapResult(success=False, error=f"RPC error {resp.status}")
+            async with session.post(
+                HELIUS_RPC_URL,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "sendTransaction",
+                    "params": [
+                        base64.b64encode(bytes(tx)).decode(),
+                        {"encoding": "base64", "skipPreFlight": False},
+                    ],
+                },
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if "result" in data:
+                        return SwapResult(
+                            success=True,
+                            signature=data["result"],
+                            input_amount=amount_sol,
+                            price_sol=float(quote.get("inAmount", 0)) / max(int(quote.get("outAmount", 1)), 1) / 1e9,
+                        )
+                    elif "error" in data:
+                        return SwapResult(success=False, error=str(data["error"]))
+                else:
+                    return SwapResult(success=False, error=f"RPC error {resp.status}")
                         
     except Exception as e:
         return SwapResult(success=False, error=str(e))
@@ -413,7 +428,7 @@ if __name__ == "__main__":
             # Just test the quote API
             q = await get_jupiter_quote(
                 SOL_MINT,
-                "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDj1v",  # USDC
+                "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",  # USDC
                 10_000_000,  # 0.01 SOL
                 50,
             )
@@ -427,7 +442,7 @@ if __name__ == "__main__":
         result = await execute_swap_legacy(
             kp,
             SOL_MINT,
-            "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDj1v",  # USDC
+            "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",  # USDC
             0.001,  # 0.001 SOL
             50,
         )

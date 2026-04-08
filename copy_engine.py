@@ -239,7 +239,7 @@ async def execute_copy_trade(trade: CopyTrade) -> bool:
         print(f"    ⚠️  No keypair — cannot execute real trades")
         return False
     
-    SOL_MINT = "So11111111111111111111111111111111111111111112"
+    SOL_MINT = "So11111111111111111111111111111111111111112"
     
     try:
         if trade.action == "BUY":
