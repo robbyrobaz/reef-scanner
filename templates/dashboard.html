@@ -235,6 +235,12 @@
         <div class="stat-card"><div class="stat-value" id="cs-winrate">—</div><div class="stat-label">Win Rate</div></div>
         <div class="stat-card"><div class="stat-value" id="cs-trades">—</div><div class="stat-label">Total Trades</div></div>
         <div class="stat-card"><div class="stat-value" id="cs-pf">—</div><div class="stat-label">Profit Factor</div></div>
+        <div class="stat-card"><div class="stat-value" id="cs-paper">—</div><div class="stat-label">Paper Trades</div></div>
+        <div class="stat-card"><div class="stat-value" id="cs-live">—</div><div class="stat-label">Live Trades</div></div>
+        <div class="stat-card"><div class="stat-value" id="cs-buys">—</div><div class="stat-label">Buys</div></div>
+        <div class="stat-card"><div class="stat-value" id="cs-sells">—</div><div class="stat-label">Sells</div></div>
+        <div class="stat-card"><div class="stat-value" id="cs-avgwin">—</div><div class="stat-label">Avg Win</div></div>
+        <div class="stat-card"><div class="stat-value" id="cs-avgloss">—</div><div class="stat-label">Avg Loss</div></div>
       </div>
     </div>
   </section>
@@ -676,11 +682,22 @@ async function loadCopyTrades() {
 async function loadCopyStats() {
   try {
     const s = await api('/api/wallet/stats');
-    $('cs-pnl').textContent = Number(s.pnl_sol||0).toFixed(4);
-    $('cs-pnl').className = 'stat-value ' + (s.pnl_sol >= 0 ? 'pos' : 'neg');
+    const pnl = Number(s.pnl_sol||0);
+    $('cs-pnl').textContent = pnl.toFixed(4);
+    $('cs-pnl').style.color = pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : '';
     $('cs-winrate').textContent = (s.win_rate||0).toFixed(1) + '%';
-    $('cs-trades').textContent = s.total_trades || 0;
+    $('cs-trades').textContent = fmt(s.total_trades || 0);
     $('cs-pf').textContent = (s.profit_factor||0).toFixed(2);
+    $('cs-paper').textContent = fmt(s.paper_trades || 0);
+    $('cs-live').textContent = fmt(s.live_trades || 0);
+    $('cs-buys').textContent = fmt(s.total_buys || 0);
+    $('cs-sells').textContent = fmt(s.total_sells || 0);
+    const aw = Number(s.avg_win||0);
+    $('cs-avgwin').textContent = aw.toFixed(6);
+    $('cs-avgwin').style.color = 'var(--green)';
+    const al = Number(s.avg_loss||0);
+    $('cs-avgloss').textContent = al.toFixed(6);
+    $('cs-avgloss').style.color = al < 0 ? 'var(--red)' : '';
   } catch (e) {
     console.error('loadCopyStats failed:', e);
   }

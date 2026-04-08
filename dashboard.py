@@ -175,8 +175,9 @@ async def get_wallet_stats():
     positions = load_positions()
     trades = load_copy_trades(limit=500)
 
-    paper = [t for t in trades if t.get("mode") == "paper"]
-    live = [t for t in trades if t.get("mode") == "live"]
+    # CSV uses status="dry_run" for paper, "FILLED"/"LIVE" for live
+    paper = [t for t in trades if t.get("status") == "dry_run"]
+    live = [t for t in trades if t.get("status") not in ("dry_run", "FAILED", "")]
 
     wins = sum(1 for t in trades if _is_profitable(t))
     total = len(trades)
@@ -186,14 +187,16 @@ async def get_wallet_stats():
     sells = sum(1 for t in trades if t.get("action", "").upper() == "SELL")
 
     gains = [t for t in trades if _is_profitable(t)]
-    losses = [t for t in trades if not _is_profitable(t)]
+    losses = [t for t in trades if not _is_profitable(t) and _trade_pnl(t) != 0]
     avg_win = (sum(_trade_pnl(t) for t in gains) / len(gains)) if gains else 0
     avg_loss = (sum(_trade_pnl(t) for t in losses) / len(losses)) if losses else 0
+    loss_sum = sum(_trade_pnl(t) for t in losses)
+    gain_sum = sum(_trade_pnl(t) for t in gains)
 
     return {
         "pnl_sol": profit,
         "win_rate": win_rate,
-        "profit_factor": abs(sum(_trade_pnl(t) for t in gains) / sum(_trade_pnl(t) for t in losses)) if losses and sum(_trade_pnl(t) for t in losses) != 0 else 0,
+        "profit_factor": abs(gain_sum / loss_sum) if loss_sum != 0 else 0,
         "total_trades": total,
         "paper_trades": len(paper),
         "live_trades": len(live),
@@ -204,10 +207,12 @@ async def get_wallet_stats():
     }
 
 def _is_profitable(t):
-    return float(t.get("copy_pnl_sol", 0) or 0) > 0
+    """CSV field is 'realized_pnl_sol' (not 'copy_pnl_sol')."""
+    return float(t.get("realized_pnl_sol", 0) or 0) > 0
 
 def _trade_pnl(t):
-    return float(t.get("copy_pnl_sol", 0) or 0)
+    """CSV field is 'realized_pnl_sol' (not 'copy_pnl_sol')."""
+    return float(t.get("realized_pnl_sol", 0) or 0)
 
 # ── API: Copy Config ───────────────────────────────────────────────────────────
 @app.get("/api/copy/config")
