@@ -57,15 +57,37 @@ def load_copy_config() -> dict:
             "keypair_path": "", "copies": {}, "default_alloc": 0.01}
 
 def load_copy_trades(limit=50):
+    """Load last N copy trades from CSV using tail-read (skip full scan)."""
+    import subprocess
     path = DATA_DIR / "copy_trades.csv"
     if not path.exists():
         return []
-    rows = []
-    with path.open() as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            rows.append(row)
-    return rows[-limit:]
+    # Read header + last N lines efficiently via tail
+    try:
+        header = path.open().readline().strip()
+        result = subprocess.run(
+            ["tail", "-n", str(limit), str(path)],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode != 0:
+            return []
+        fields = header.split(",")
+        rows = []
+        for line in result.stdout.strip().split("\n"):
+            if not line or line.startswith(fields[0]):
+                continue
+            vals = line.split(",")
+            if len(vals) >= len(fields):
+                rows.append(dict(zip(fields, vals)))
+        return rows
+    except Exception:
+        # Fallback: read all
+        rows = []
+        with path.open() as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                rows.append(row)
+        return rows[-limit:]
 
 def load_wallets_csv(limit=50):
     """Load top wallets from DuckDB sorted by score desc."""

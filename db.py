@@ -105,11 +105,15 @@ def insert_swaps(swaps: list):
     df = pd.DataFrame(rows)
     con.execute("INSERT OR IGNORE INTO swaps BY NAME SELECT * FROM df")
 
-def get_swaps_df() -> pd.DataFrame:
-    return get_db().execute("SELECT * FROM swaps ORDER BY block_time DESC").df()
+def get_swaps_df(limit: int = 1000) -> pd.DataFrame:
+    """Get recent swaps as DataFrame. Capped to avoid full table scan."""
+    cap = min(limit, 5000)
+    return get_db().execute(f"SELECT * FROM swaps ORDER BY block_time DESC LIMIT {cap}").df()
 
-def get_all_swaps_list() -> list:
-    rows = get_db().execute("SELECT * FROM swaps ORDER BY block_time DESC").fetchall()
+def get_all_swaps_list(limit: int = 1000) -> list:
+    """Get recent swaps as list of dicts. Capped for performance."""
+    cap = min(limit, 5000)
+    rows = get_db().execute(f"SELECT * FROM swaps ORDER BY block_time DESC LIMIT {cap}").fetchall()
     cols = [d[0] for d in get_db().description]
     return [dict(zip(cols, r)) for r in rows]
 
@@ -161,10 +165,11 @@ def get_top_wallets(limit: int = 50) -> pd.DataFrame:
         f"FROM wallets ORDER BY score DESC LIMIT {cap}"
     ).df()
 
-def get_qualified_wallets() -> pd.DataFrame:
-    """Qualified wallets (score >= 0.5)."""
+def get_qualified_wallets(limit: int = 200) -> pd.DataFrame:
+    """Qualified wallets (score >= 0.5). Capped for performance."""
+    cap = min(limit, 500)
     return get_db().execute(
-        "SELECT * FROM wallets WHERE score >= 0.5 ORDER BY score DESC"
+        f"SELECT * FROM wallets WHERE score >= 0.5 ORDER BY score DESC LIMIT {cap}"
     ).df()
 
 def wallet_count() -> tuple[int, int]:
