@@ -242,6 +242,7 @@
         <div class="stat-card"><div class="stat-value" id="cs-pf">—</div><div class="stat-label">Profit Factor</div></div>
         <div class="stat-card"><div class="stat-value" id="cs-paper">—</div><div class="stat-label">Paper Trades</div></div>
         <div class="stat-card"><div class="stat-value" id="cs-live">—</div><div class="stat-label">Live Trades</div></div>
+        <div class="stat-card"><div class="stat-value" id="cs-failed">—</div><div class="stat-label">Failed</div></div>
         <div class="stat-card"><div class="stat-value" id="cs-buys">—</div><div class="stat-label">Buys</div></div>
         <div class="stat-card"><div class="stat-value" id="cs-sells">—</div><div class="stat-label">Sells</div></div>
         <div class="stat-card"><div class="stat-value" id="cs-avgwin">—</div><div class="stat-label">Avg Win</div></div>
@@ -695,6 +696,8 @@ async function loadCopyStats() {
     $('cs-pf').textContent = (s.profit_factor||0).toFixed(2);
     $('cs-paper').textContent = fmt(s.paper_trades || 0);
     $('cs-live').textContent = fmt(s.live_trades || 0);
+    $('cs-failed').textContent = fmt(s.failed_trades || 0);
+    if (s.failed_trades > 0) $('cs-failed').style.color = 'var(--red)';
     $('cs-buys').textContent = fmt(s.total_buys || 0);
     $('cs-sells').textContent = fmt(s.total_sells || 0);
     const aw = Number(s.avg_win||0);

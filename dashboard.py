@@ -57,29 +57,23 @@ def load_copy_config() -> dict:
             "keypair_path": "", "copies": {}, "default_alloc": 0.01}
 
 def load_copy_trades(limit=50):
-    """Load last N copy trades from CSV using tail-read (skip full scan)."""
-    import subprocess
+    """Load last N copy trades from CSV. Uses csv.DictReader on tail output."""
+    import subprocess, io
     path = DATA_DIR / "copy_trades.csv"
     if not path.exists():
         return []
-    # Read header + last N lines efficiently via tail
     try:
         header = path.open().readline().strip()
         result = subprocess.run(
             ["tail", "-n", str(limit), str(path)],
             capture_output=True, text=True, timeout=5
         )
-        if result.returncode != 0:
+        if result.returncode != 0 or not result.stdout.strip():
             return []
-        fields = header.split(",")
-        rows = []
-        for line in result.stdout.strip().split("\n"):
-            if not line or line.startswith(fields[0]):
-                continue
-            vals = line.split(",")
-            if len(vals) >= len(fields):
-                rows.append(dict(zip(fields, vals)))
-        return rows
+        # Use csv.DictReader to handle quoted fields properly
+        text = header + "\n" + result.stdout.strip()
+        reader = csv.DictReader(io.StringIO(text))
+        return list(reader)
     except Exception:
         # Fallback: read all
         rows = []
@@ -175,9 +169,10 @@ async def get_wallet_stats():
     positions = load_positions()
     trades = load_copy_trades(limit=500)
 
-    # CSV uses status="dry_run" for paper, "FILLED"/"LIVE" for live
+    # Status breakdown: dry_run=paper, confirmed=live success, failed=attempted but errored
     paper = [t for t in trades if t.get("status") == "dry_run"]
-    live = [t for t in trades if t.get("status") not in ("dry_run", "FAILED", "")]
+    live = [t for t in trades if t.get("status") == "confirmed"]
+    failed = [t for t in trades if t.get("status") == "failed"]
 
     wins = sum(1 for t in trades if _is_profitable(t))
     total = len(trades)
@@ -200,6 +195,7 @@ async def get_wallet_stats():
         "total_trades": total,
         "paper_trades": len(paper),
         "live_trades": len(live),
+        "failed_trades": len(failed),
         "total_buys": buys,
         "total_sells": sells,
         "avg_win": avg_win,
