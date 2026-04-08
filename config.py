@@ -72,10 +72,14 @@ ACTIVITY_WINDOW_DAYS = 30
 MIN_TRADES_30D = 2
 
 # ── Scoring Weights ───────────────────────────────────────────────────
-WEIGHT_WIN_RATE = 0.40
-WEIGHT_AVG_ROI = 0.30
-WEIGHT_TRADE_FREQ = 0.20
+WEIGHT_WIN_RATE = 0.30
+WEIGHT_AVG_ROI = 0.10
+WEIGHT_TRADE_FREQ = 0.15
 WEIGHT_RECENCY = 0.10
+WEIGHT_PF = 0.20   # profit factor — heavily weighted
+
+# ── Minimum Thresholds ───────────────────────────────────────────────
+MIN_PF = 2.0       # minimum profit factor — filters out losing wallets
 
 # ── RPC Fallbacks ─────────────────────────────────────────────────────
 PUBLIC_RPC_ENDPOINTS = [

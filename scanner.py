@@ -4,13 +4,11 @@ Single-pass block scanner: finds DEX activity + extracts swaps + identifies wall
 
 Run: SCANNER_MODE=discover venv/bin/python scanner.py
 """
-
 import asyncio
-import csv
 import os
 import sys
 from collections import defaultdict
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Set
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -28,6 +26,7 @@ from config import (
     WALLET_DB_FILE,
     DATA_DIR,
 )
+from db import init_db, get_all_swaps_list, insert_swaps, save_wallets
 from models import WalletMetrics
 from swap_parser import (
     DEX_PROGRAMS,
@@ -340,162 +339,46 @@ def calculate_metrics(wallet: str, swaps: List[ParsedSwap]) -> Optional[WalletMe
 # ── Filtering & Output ────────────────────────────────────────────────
 
 def filter_and_rank(wallets: List[WalletMetrics]) -> List[WalletMetrics]:
-    """Filter by thresholds and rank by score"""
+    """Rank by score (PF threshold is informational — scanner still tracks all wallets)"""
     from config import MIN_TRADES, MIN_WIN_RATE, MIN_SPAN_HOURS, MIN_AVG_ROI
 
+    # Filter only by basic trade quality — keep PF < 2.0 wallets in DB for completeness
     filtered = [
         w for w in wallets
         if w.total_trades >= MIN_TRADES
         and w.win_rate >= MIN_WIN_RATE
         and w.avg_roi >= MIN_AVG_ROI
         and (w.span_seconds / 3600) >= MIN_SPAN_HOURS
+        # MIN_PF is NOT enforced here — all profitable-ish wallets stay in the DB
+        # but PF heavily weights the score so high-PF wallets bubble to the top
     ]
     return sorted(filtered, key=lambda w: w.score, reverse=True)
 
 
-def purge_old_entries(filepath: str, max_age_days: int = 30):
-    """
-    Auto-purge: Remove wallet entries older than max_age_days.
-    Simple timestamp-based cleanup.
-    """
-    if not os.path.exists(filepath):
-        return
-
-    with open(filepath, "r", newline="") as f:
-        reader = csv.DictReader(f)
-        rows = list(reader)
-
-    if not rows:
-        return
-
-    cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
-    purged = 0
-    kept = []
-
-    for row in rows:
-        last_active_str = row.get("last_active", "")
-        if not last_active_str or last_active_str == "N/A":
-            # No timestamp - keep it
-            kept.append(row)
-            continue
-
-        try:
-            last_active = datetime.fromisoformat(last_active_str.replace("Z", "+00:00"))
-            if last_active >= cutoff:
-                kept.append(row)
-            else:
-                purged += 1
-        except:
-            kept.append(row)
-
-    if purged > 0:
-        with open(filepath, "w", newline="") as f:
-            writer = csv.DictReader
-            fieldnames = ["address", "score", "total_trades", "win_rate", "profit_factor", "avg_roi",
-                          "best_roi", "worst_roi", "avg_hold_minutes", "last_active",
-                          "favorite_token", "solscan_link"]
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(kept)
-        print(f"\n🧹 Auto-purged {purged} stale wallets (> {max_age_days} days old)")
-
-    return purged
+def purge_old_entries(max_age_days: int = 30):
+    """Delete wallets inactive > max_age_days from DuckDB."""
+    con = get_db()
+    con.execute(
+        "DELETE FROM wallets WHERE last_active != 'N/A' AND CAST(last_active AS TIMESTAMP) < CAST(? AS TIMESTAMP)",
+        [datetime.now(timezone.utc) - timedelta(days=max_age_days)]
+    )
+    print(f"\n🧹 Auto-purged stale wallets (> {max_age_days} days old)")
 
 
 def load_historical_swaps(filepath: str) -> List[ParsedSwap]:
-    """Load all swaps from historical CSV"""
-    if not os.path.exists(filepath):
-        return []
-
-    swaps = []
-    with open(filepath, newline="") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            try:
-                swap = ParsedSwap(
-                    wallet=row["wallet"],
-                    signature=row["signature"],
-                    dex=row["dex"],
-                    token_mint=row["token_mint"],
-                    action=row["action"],
-                    amount=float(row["amount"]),
-                    amount_sol=float(row["amount_sol"]),
-                    price_sol=float(row["price_sol"]),
-                    slot=int(row["slot"]),
-                    block_time=int(row["block_time"]),
-                    fee=int(row.get("fee", 0)),
-                )
-                swaps.append(swap)
-            except:
-                continue
-    return swaps
+    """Load all swaps from DuckDB (filepath param kept for compat)."""
+    return get_all_swaps_list()
 
 
-def save_csv(wallets: List[WalletMetrics], filepath: str):
-    """Save to CSV (overwrite with latest state)"""
-    os.makedirs(os.path.dirname(filepath), exist_ok=True)
-
-    with open(filepath, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow([
-            "address", "score", "total_trades", "win_rate", "profit_factor", "avg_roi",
-            "best_roi", "worst_roi", "avg_hold_minutes", "last_active",
-            "favorite_token", "solscan_link"
-        ])
-
-        for w in wallets:
-            avg_hold = w.avg_hold_time_seconds // 60 if w.avg_hold_time_seconds else 0
-            writer.writerow([
-                w.address,
-                round(w.score, 3),
-                w.total_trades,
-                round(w.win_rate, 3),
-                round(w.profit_factor, 2),
-                round(w.avg_roi, 3),
-                round(w.best_roi, 3),
-                round(w.worst_roi, 3),
-                avg_hold,
-                w.last_active.isoformat() if w.last_active else "N/A",
-                w.favorite_token[:20] if w.favorite_token else "",
-                f"https://solscan.io/account/{w.address}",
-            ])
-
-    print(f"\n💾 Saved {len(wallets)} wallets to {filepath}")
+def save_wallets_to_db(wallets: List[WalletMetrics], filepath: str):
+    """Save wallets to DuckDB (filepath param kept for compat)."""
+    save_wallets(wallets)
+    print(f"\n💾 Saved {len(wallets)} wallets to DuckDB")
 
 
-def save_swaps_csv(swaps: List[ParsedSwap], filepath: str):
-    """Append raw swaps to CSV for historical tracking"""
-    if not swaps:
-        return
-
-    os.makedirs(os.path.dirname(filepath), exist_ok=True)
-    file_exists = os.path.exists(filepath)
-
-    with open(filepath, "a", newline="") as f:
-        writer = csv.writer(f)
-        if not file_exists:
-            writer.writerow([
-                "wallet", "signature", "dex", "token_mint", "action",
-                "amount", "amount_sol", "price_sol", "slot", "block_time", "fee"
-            ])
-
-        for s in swaps:
-            writer.writerow([
-                s.wallet,
-                s.signature,
-                s.dex,
-                s.token_mint,
-                s.action,
-                round(s.amount, 6),
-                round(s.amount_sol, 6),
-                round(s.price_sol, 9),
-                s.slot,
-                s.block_time,
-                s.fee,
-            ])
-
-    print(f"\n💾 Appended {len(swaps)} swaps to {filepath} (total accumulated)")
-
+def save_swaps_to_db(swaps: List[ParsedSwap], filepath: str):
+    """Save new swaps to DuckDB (filepath param kept for compat)."""
+    insert_swaps(swaps)
 
 # ── Main ───────────────────────────────────────────────────────────────
 
@@ -503,6 +386,9 @@ async def main():
     print("=" * 60)
     print("🏄 Reef DEX Scanner — Find Profitable Wallets")
     print("=" * 60)
+
+    # Init DuckDB (creates tables if first run)
+    init_db()
 
     if not HELIUS_API_KEY:
         print("❌ No Helius API key in .env")
@@ -525,7 +411,7 @@ async def main():
         sys.exit(1)
 
     # Load historical swaps and merge with new ones
-    hist_path = f"{DATA_DIR}/swaps.csv"
+    hist_path = f"{DATA_DIR}/swaps.csv.legacy"
     historical_swaps = load_historical_swaps(hist_path)
 
     # Deduplicate by signature (don't double-count same tx)
@@ -567,11 +453,11 @@ async def main():
               f"{w.score:.3f}  {w.total_trades:<6} {win_str:<6} {pf_str:<6} {span_h:<7} {flag}{ttype:<7} {roi_pct}")
 
     # Save NEW swaps (append mode) + wallet DB (recalculated from full history)
-    save_swaps_csv(truly_new_swaps, f"{DATA_DIR}/swaps.csv")
+    save_swaps_to_db(truly_new_swaps, f"{DATA_DIR}/swaps.csv")
     
     if wallets:
-        purge_old_entries(WALLET_DB_FILE)
-        save_csv(wallets, WALLET_DB_FILE)
+        purge_old_entries()
+        save_wallets_to_db(wallets, WALLET_DB_FILE)
 
     print(f"\n✅ Scan complete!")
     print(f"   Swaps saved: {len(all_swaps)}")

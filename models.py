@@ -58,7 +58,7 @@ class WalletMetrics:
     @property
     def score(self) -> float:
         """Weighted score across all metrics"""
-        from config import WEIGHT_WIN_RATE, WEIGHT_AVG_ROI, WEIGHT_TRADE_FREQ, WEIGHT_RECENCY
+        from config import WEIGHT_WIN_RATE, WEIGHT_AVG_ROI, WEIGHT_TRADE_FREQ, WEIGHT_RECENCY, WEIGHT_PF
 
         # Recency score: 1.0 if active < 1 day, 0.0 if > 7 days
         recency_score = 0.0
@@ -66,11 +66,16 @@ class WalletMetrics:
             days_ago = (datetime.now().astimezone() - self.last_active).days
             recency_score = max(0.0, 1.0 - (days_ago / 7))
 
-        freq_score = min(1.0, self.total_trades / 50)  # 50 trades = max freq score
+        # Trade frequency: 20 trades = max freq score (reduced from 50 to give more credit to smaller wallets)
+        freq_score = min(1.0, self.total_trades / 20)
+
+        # Profit factor: PF=2.0 → score 1.0, cap at PF=4.0
+        pf_score = min(1.0, max(0.0, self.profit_factor) / 2.0)
 
         return (
             WEIGHT_WIN_RATE * self.win_rate +
             WEIGHT_AVG_ROI * min(1.0, max(0.0, self.avg_roi)) +
             WEIGHT_TRADE_FREQ * freq_score +
-            WEIGHT_RECENCY * recency_score
+            WEIGHT_RECENCY * recency_score +
+            WEIGHT_PF * pf_score
         )

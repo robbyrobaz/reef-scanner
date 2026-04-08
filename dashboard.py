@@ -20,6 +20,10 @@ BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "data"
 SCANNER_DIR = BASE_DIR.parent  # /home/rob/reef-scanner
 
+# ── DuckDB ─────────────────────────────────────────────────────────────────────
+from db import init_db, get_stats as _duck_stats, wallet_count, swap_count
+init_db()   # safe to call multiple times
+
 # ── Config ──────────────────────────────────────────────────────────────────────
 def load_env():
     path = BASE_DIR / ".env"
@@ -56,106 +60,33 @@ def load_copy_trades(limit=50):
         return []
     rows = []
     with path.open() as f:
-        reader = csv.DictReader(f)
+        reader = __import__("csv").DictReader(f)
         for row in reader:
             rows.append(row)
     return rows[-limit:]
 
-def load_wallets_csv(limit=50):
-    """Load top wallets from wallets.csv sorted by score desc."""
-    path = DATA_DIR / "wallets.csv"
-    if not path.exists():
-        return []
-    rows = []
-    with path.open() as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            rows.append(row)
-    # Sort by score desc — the CSV is not pre-sorted by scanner
-    rows.sort(key=lambda r: float(r["score"]), reverse=True)
-    return rows[:limit]
+# ── Stats (DuckDB-powered) ─────────────────────────────────────────────────────
 
-def load_swaps_csv(limit=50):
-    """Load recent swaps from swaps.csv sorted by block_time desc."""
-    path = DATA_DIR / "swaps.csv"
-    if not path.exists():
-        return []
-    rows = []
-    with path.open() as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            rows.append(row)
-    # Most recent last — reverse to get newest first, then slice
-    return list(reversed(rows))[:limit]
+def compute_stats():
+    """Compute all dashboard stats from DuckDB (fast)."""
+    return _duck_stats()
+
+def _count_wallets():
+    total, qual = wallet_count()
+    return total
+
+def _count_qualified():
+    total, qual = wallet_count()
+    return qual
+
+def _count_swaps():
+    return swap_count()
 
 def load_positions():
     path = DATA_DIR / "positions.json"
     if path.exists():
         return __import__("json").loads(path.read_text())
     return []
-
-# ── Compute stats ──────────────────────────────────────────────────────────────
-def compute_stats():
-    wallets = load_wallets_csv(limit=50)
-    recent_swaps = load_swaps_csv(limit=50)  # last 50 for recent-swaps table
-    all_swaps = load_swaps_csv(limit=1000000)  # all for accurate totals
-
-    buys = sum(1 for s in all_swaps if s.get("action", "").upper() == "BUY")
-    sells = sum(1 for s in all_swaps if s.get("action", "").upper() == "SELL")
-
-    dex_counts = {}
-    for s in all_swaps:
-        dex = s.get("dex", "unknown").lower()
-        dex_counts[dex] = dex_counts.get(dex, 0) + 1
-
-    # Top wallet
-    top = wallets[0] if wallets else None
-
-    # Last scan time = most recent swap time
-    last_scan = all_swaps[-1].get("block_time", "") if all_swaps else ""
-
-    return {
-        "total_wallets": _count_wallets(),
-        "qualified_wallets": _count_qualified(),
-        "total_swaps": _count_swaps(),
-        "buys": buys,
-        "sells": sells,
-        "dex_counts": dex_counts,
-        "top_wallets": wallets[:50],
-        "top_wallet": top,
-        "last_scan": last_scan,
-        "recent_swaps": list(reversed(recent_swaps)),
-    }
-
-def _count_wallets():
-    path = DATA_DIR / "wallets.csv"
-    if not path.exists():
-        return 0
-    with path.open() as f:
-        return sum(1 for _ in f) - 1  # subtract header
-
-def _count_qualified():
-    """Count wallets with score >= 0.5 (actual threshold used by scanner)."""
-    path = DATA_DIR / "wallets.csv"
-    if not path.exists():
-        return 0
-    count = 0
-    with path.open() as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            try:
-                if float(row.get("score", 0)) >= 0.5:
-                    count += 1
-            except ValueError:
-                pass
-    return count
-
-def _count_swaps():
-    path = DATA_DIR / "swaps.csv"
-    if not path.exists():
-        return 0
-    with path.open() as f:
-        return sum(1 for _ in f) - 1
 
 # ── Dashboard route ────────────────────────────────────────────────────────────
 @app.get("/", response_class=HTMLResponse)
@@ -183,12 +114,12 @@ async def get_stats():
 # ── API: Wallets (top 50, sorted by score) ───────────────────────────────────
 @app.get("/api/wallets")
 async def get_wallets(limit: int = 50):
-    return load_wallets_csv(limit=limit)
+    return load_wallets_from_db(limit=limit)
 
 # ── API: Recent Swaps ─────────────────────────────────────────────────────────
 @app.get("/api/swaps")
 async def get_swaps(limit: int = 50):
-    return load_swaps_csv(limit=limit)
+    return load_swaps_from_db(limit=limit)
 
 # ── API: Positions ─────────────────────────────────────────────────────────────
 @app.get("/api/positions")
@@ -332,6 +263,56 @@ async def wallet_disconnect():
     cfg["keypair_path"] = ""
     _save_config(cfg)
     return {"ok": True}
+
+# ── API: Generate new keypair ─────────────────────────────────────────────────
+@app.post("/api/wallet/generate")
+async def generate_keypair():
+    """Generate a new random keypair and save to data/wallet_keypair.json"""
+    import json, base64
+    try:
+        from solders.keypair import Keypair
+        keypair = Keypair()
+        address = str(keypair.pubkey())
+        privkey_b64 = base64.b64encode(bytes(keypair)).decode()
+        keypair_path = DATA_DIR / "wallet_keypair.json"
+        keypair_path.write_text(json.dumps({"address": address, "privkey": privkey_b64}))
+        cfg = load_copy_config()
+        cfg["user_wallet"] = address
+        cfg["keypair_path"] = str(keypair_path)
+        _save_config(cfg)
+        return {"address": address, "keypair_path": str(keypair_path)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ── API: Import private key ───────────────────────────────────────────────────
+@app.post("/api/wallet/import")
+async def import_private_key(request: Request):
+    """Import a base58 private key and return the address"""
+    import json, base64
+    body = await request.json()
+    privkey_b64 = body.get("privkey", "").strip()
+    if not privkey_b64:
+        raise HTTPException(status_code=400, detail="No private key provided")
+    try:
+        from solders.keypair import Keypair
+        from base58 import b58decode
+        key_bytes = b58decode(privkey_b64)
+        if len(key_bytes) != 64:
+            raise HTTPException(status_code=400, detail="Private key must be 64 bytes")
+        keypair = Keypair.from_bytes(key_bytes)
+        address = str(keypair.pubkey())
+        # Save to file
+        keypair_path = DATA_DIR / "wallet_keypair.json"
+        keypair_path.write_text(json.dumps({"address": address, "privkey": privkey_b64}))
+        cfg = load_copy_config()
+        cfg["user_wallet"] = address
+        cfg["keypair_path"] = str(keypair_path)
+        _save_config(cfg)
+        return {"address": address}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def _save_config(cfg):
