@@ -1,28 +1,29 @@
 #!/bin/bash
-# Start the copy engine and tailscale proxy if not already running
+# Start the copy engine if not already running
+# Run: bash start_copy_engine.sh
 
 WORKSPACE="/home/rob/reef-workspace"
 CE_PIDFILE="$WORKSPACE/data/copy_engine.pid"
 CE_LOGFILE="$WORKSPACE/cron/copy_engine.log"
-PROXY_PIDFILE="$WORKSPACE/data/tailscale_proxy.pid"
-PROXY_LOGFILE="$WORKSPACE/data/tailscale_proxy.log"
+
+# Kill stale process if pidfile exists but process is dead
+if [ -f "$CE_PIDFILE" ]; then
+    PID=$(cat "$CE_PIDFILE")
+    if ! kill -0 "$PID" 2>/dev/null; then
+        echo "Stale PID $PID — cleaning up"
+        rm -f "$CE_PIDFILE"
+    fi
+fi
 
 # Start copy engine
 if [ -f "$CE_PIDFILE" ] && kill -0 "$(cat "$CE_PIDFILE")" 2>/dev/null; then
-    echo "copy_engine already running"
+    echo "copy_engine already running (PID $(cat "$CE_PIDFILE"))"
 else
     cd "$WORKSPACE"
-    nohup venv/bin/python copy_engine.py >> "$CE_LOGFILE" 2>&1 &
+    rm -rf __pycache__
+    nohup venv/bin/python -u copy_engine.py >> "$CE_LOGFILE" 2>&1 &
     echo $! > "$CE_PIDFILE"
-    echo "copy_engine started"
-fi
-
-# Start tailscale proxy
-if [ -f "$PROXY_PIDFILE" ] && kill -0 "$(cat "$PROXY_PIDFILE")" 2>/dev/null; then
-    echo "tailscale_proxy already running"
-else
-    cd "$WORKSPACE"
-    nohup python3 tailscale_proxy.py >> "$PROXY_LOGFILE" 2>&1 &
-    echo $! > "$PROXY_PIDFILE"
-    echo "tailscale_proxy started"
+    echo "copy_engine started (PID $!)"
+    sleep 3
+    tail -15 "$CE_LOGFILE"
 fi
