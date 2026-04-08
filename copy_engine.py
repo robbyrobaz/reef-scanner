@@ -36,6 +36,7 @@ from config import (
 from copy_config import load_copy_config, save_copy_config, CopyConfig, CopyEntry
 from swap_parser import parse_transaction_for_swaps, ParsedSwap
 from swap_executor import execute_swap_legacy, load_solana_keypair, DRY_RUN as EXECUTOR_DRY_RUN, SwapResult
+from pumpfun_executor import execute_pumpfun_swap
 from positions import (
     load_positions, save_positions, add_position_from_trade, reduce_position,
     get_positions_summary, refresh_positions,
@@ -227,7 +228,8 @@ async def get_transaction(sig: str) -> Optional[dict]:
 
 async def execute_copy_trade(trade: CopyTrade) -> bool:
     """
-    Execute a copy trade: BUY or SELL via Jupiter.
+    Execute a copy trade via PumpPortal (pumpfun tokens).
+    Falls back to Jupiter for graduated tokens.
     Returns True if successful.
     """
     global KEYPAIR_LOADED, POSITIONS
@@ -239,63 +241,25 @@ async def execute_copy_trade(trade: CopyTrade) -> bool:
         print(f"    ⚠️  No keypair — cannot execute real trades")
         return False
     
-    SOL_MINT = "So11111111111111111111111111111111111111112"
-    
     try:
-        if trade.action == "BUY":
-            # Swap SOL for the token
-            result = await execute_swap_legacy(
-                KEYPAIR_LOADED,
-                SOL_MINT,          # Input: SOL
-                trade.token_mint,   # Output: the meme coin
-                trade.scaled_amount_sol,
-                slippage_bps=200,   # 2% slippage for volatile meme coins
-            )
-            
-            if result.success:
-                trade.our_sig = result.signature
-                trade.our_price_sol = result.price_sol if result.price_sol > 0 else trade.source_price_sol
-                
-                # Update position tracker
-                if result.output_amount > 0:
-                    tokens_bought = result.output_amount
-                    POSITIONS = add_position_from_trade(
-                        POSITIONS, trade.token_mint,
-                        tokens_bought, trade.our_price_sol,
-                        trade.source_wallet,
-                    )
-                    save_positions(POSITIONS)
-                    print(f"    ✅ BUY executed: {tokens_bought:.4f} tokens at ~{trade.our_price_sol:.9f} SOL/token | sig: {result.signature[:20]}...")
-                return True
-            else:
-                trade.error = result.error
-                return False
+        # Use PumpPortal for all trades (handles pump, raydium, pump-amm via pool=auto)
+        result = await execute_pumpfun_swap(
+            KEYPAIR_LOADED,
+            trade.action.lower(),       # "buy" or "sell"
+            trade.token_mint,
+            trade.scaled_amount_sol,
+            slippage=15,                # 15% for memecoins
+            priority_fee=0.005,
+            pool="auto",
+        )
         
-        elif trade.action == "SELL":
-            # Sell the token for SOL
-            
-            result = await execute_swap_legacy(
-                KEYPAIR_LOADED,
-                trade.token_mint,    # Input: the meme coin
-                SOL_MINT,            # Output: SOL
-                trade.scaled_amount_sol * 0.999,  # Slightly less to handle rounding
-                slippage_bps=200,
-            )
-            
-            if result.success:
-                trade.our_sig = result.signature
-                trade.our_price_sol = result.price_sol if result.price_sol > 0 else trade.source_price_sol
-                
-                # Reduce position tracker
-                POSITIONS = reduce_position(POSITIONS, trade.token_mint, trade.scaled_amount_sol)
-                save_positions(POSITIONS)
-                print(f"    ✅ SELL executed: {trade.scaled_amount_sol:.4f} SOL worth at ~{trade.our_price_sol:.9f} SOL/token | sig: {result.signature[:20]}...")
-                return True
-            else:
-                trade.error = result.error
-                return False
-        
-        return False
+        if result.success:
+            trade.our_sig = result.signature
+            trade.our_price_sol = result.price_sol if result.price_sol > 0 else trade.source_price_sol
+            return True
+        else:
+            trade.error = result.error
+            return False
     
     except Exception as e:
         print(f"    ❌ Copy trade failed: {e}")
@@ -444,9 +408,10 @@ async def run_engine():
     cli_live = "--live" in sys.argv
     DRY_RUN = not cli_live and trade_mode != "live"
     
-    # Sync swap_executor's DRY_RUN flag so actual swaps execute
-    import swap_executor
+    # Sync DRY_RUN flag to all executors
+    import swap_executor, pumpfun_executor
     swap_executor.DRY_RUN = DRY_RUN
+    pumpfun_executor.DRY_RUN = DRY_RUN
     
     print(f"   Mode: {'🐸 DRY RUN (PAPER)' if DRY_RUN else '🔴 LIVE — REAL TRADES'}")
     if cli_live:
