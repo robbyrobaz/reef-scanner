@@ -97,13 +97,14 @@ def load_positions():
 # ── Compute stats ──────────────────────────────────────────────────────────────
 def compute_stats():
     wallets = load_wallets_csv(limit=50)
-    swaps = load_swaps_csv(limit=1000)
+    recent_swaps = load_swaps_csv(limit=50)  # last 50 for recent-swaps table
+    all_swaps = load_swaps_csv(limit=1000000)  # all for accurate totals
 
-    buys = sum(1 for s in swaps if s.get("action", "").upper() == "BUY")
-    sells = sum(1 for s in swaps if s.get("action", "").upper() == "SELL")
+    buys = sum(1 for s in all_swaps if s.get("action", "").upper() == "BUY")
+    sells = sum(1 for s in all_swaps if s.get("action", "").upper() == "SELL")
 
     dex_counts = {}
-    for s in swaps:
+    for s in all_swaps:
         dex = s.get("dex", "unknown").lower()
         dex_counts[dex] = dex_counts.get(dex, 0) + 1
 
@@ -111,7 +112,7 @@ def compute_stats():
     top = wallets[0] if wallets else None
 
     # Last scan time = most recent swap time
-    last_scan = swaps[-1].get("block_time", "") if swaps else ""
+    last_scan = all_swaps[-1].get("block_time", "") if all_swaps else ""
 
     return {
         "total_wallets": _count_wallets(),
@@ -123,7 +124,7 @@ def compute_stats():
         "top_wallets": wallets[:50],
         "top_wallet": top,
         "last_scan": last_scan,
-        "recent_swaps": list(reversed(swaps))[:50],
+        "recent_swaps": list(reversed(recent_swaps)),
     }
 
 def _count_wallets():
@@ -134,7 +135,20 @@ def _count_wallets():
         return sum(1 for _ in f) - 1  # subtract header
 
 def _count_qualified():
-    return max(0, _count_wallets() - 2700)  # approximate based on score threshold
+    """Count wallets with score >= 0.5 (actual threshold used by scanner)."""
+    path = DATA_DIR / "wallets.csv"
+    if not path.exists():
+        return 0
+    count = 0
+    with path.open() as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                if float(row.get("score", 0)) >= 0.5:
+                    count += 1
+            except ValueError:
+                pass
+    return count
 
 def _count_swaps():
     path = DATA_DIR / "swaps.csv"
