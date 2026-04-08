@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🏄 Reef Scanner + Copy Trading</title>
+  <link rel="stylesheet" href="{{ base }}/static/css/dashboard.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Header -->
+    <header class="header">
+      <div class="header-left">
+        <h1>🏄 REEF SCANNER <span id="mode-badge" class="badge">COPY ACTIVE</span></h1>
+        <div class="status-bar">
+          <span>Last scan: <span id="last-scan">—</span></span>
+          <span>Swaps: <span id="total-swaps">—</span></span>
+          <span>Wallets: <span id="total-wallets">—</span></span>
+          <span>Up: <span id="uptime">0m 0s</span></span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Tabs -->
+    <nav class="tabs">
+      <button class="tab active" data-tab="discovery" onclick="app.switchTab('discovery')">🔍 Discovery</button>
+      <button class="tab" data-tab="copy" onclick="app.switchTab('copy')">🤝 Copy Trading</button>
+    </nav>
+
+    <!-- ===== DISCOVERY TAB ===== -->
+    <section id="tab-discovery" class="tab-content active">
+      <div class="stats-grid">
+        <div class="stat-card"><div class="stat-value" id="stat-swaps">—</div><div class="stat-label">Total Swaps</div></div>
+        <div class="stat-card"><div class="stat-value" id="stat-wallets">—</div><div class="stat-label">Wallets Found</div></div>
+        <div class="stat-card"><div class="stat-value" id="stat-qualified">—</div><div class="stat-label">Qualified</div></div>
+        <div class="stat-card"><div class="stat-value" id="stat-buy-pct">—</div><div class="stat-label">Buy %</div></div>
+      </div>
+
+      <div class="section">
+        <h2>🔥 DEX BREAKDOWN</h2>
+        <div id="dex-breakdown" class="dex-grid"></div>
+      </div>
+
+      <div class="section">
+        <h2>🏆 TOP WALLET <span class="sub">#1 by score</span></h2>
+        <div id="top-wallet-banner" class="top-wallet-banner"></div>
+        <table class="data-table" id="top-wallets-table">
+          <thead><tr><th>Address</th><th>Score</th><th>Trades</th><th>Win%</th><th>PF</th><th>ROI</th><th>Token</th><th>Last Active</th></tr></thead>
+          <tbody id="top-wallets-body"><tr><td colspan="8" class="loading">Loading…</td></tr></tbody>
+        </table>
+      </div>
+
+      <div class="section">
+        <h2>💱 RECENT SWAPS <span class="sub">(last 50)</span></h2>
+        <div class="swap-controls">
+          <label>Filter by token:
+            <select id="swap-token-filter" onchange="discovery.filterSwaps()">
+              <option value="">All</option>
+            </select>
+          </label>
+          <button class="btn btn-small" onclick="discovery.loadSwaps()">↻ Refresh</button>
+        </div>
+        <table class="data-table">
+          <thead><tr><th>Time</th><th>Action</th><th>Token</th><th>Amt</th><th>SOL</th><th>DEX</th><th>Sig</th></tr></thead>
+          <tbody id="swaps-body"><tr><td colspan="7" class="loading">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ===== COPY TRADING TAB ===== -->
+    <section id="tab-copy" class="tab-content">
+      <div class="section">
+        <h2>👛 YOUR WALLET</h2>
+        <div id="wallet-status"></div>
+      </div>
+
+      <div class="section">
+        <h2>⚙️ CONTROLS</h2>
+        <div class="copy-controls-row">
+          <label class="toggle-label">
+            <span>Copy Trading</span>
+            <input type="checkbox" id="global-toggle" onchange="copyTrading.toggleGlobal()">
+            <span class="toggle-switch"></span>
+          </label>
+          <label class="toggle-label">
+            <span>Live Mode</span>
+            <input type="checkbox" id="live-toggle" onchange="copyTrading.toggleMode()">
+            <span class="toggle-switch"></span>
+          </label>
+          <div style="margin-left:auto;display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);">
+            Alloc/Src:
+            <input type="number" id="default-alloc" value="0.01" step="0.001" min="0.001" max="1"
+              style="width:70px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);"
+              onchange="copyTrading.setDefaultAlloc(this.value)">
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <h2>📋 ENABLED COPY TRADES <span id="copy-count" class="sub">(0)</span></h2>
+        <table class="data-table">
+          <thead><tr><th>Address</th><th>Alloc SOL</th><th>Last Sig</th><th>Last Copied</th><th>Actions</th></tr></thead>
+          <tbody id="copy-wallets-body"><tr><td colspan="5" class="loading">Loading…</td></tr></tbody>
+        </table>
+      </div>
+
+      <div class="section">
+        <h2>📜 COPY TRADE LOG <span id="trade-log-count" class="sub">(0)</span></h2>
+        <table class="data-table">
+          <thead><tr><th>Time</th><th>Action</th><th>Source</th><th>Token</th><th>Amt (orig→copy)</th><th>Status</th><th>Sig</th></tr></thead>
+          <tbody id="copy-trades-body"><tr><td colspan="7" class="loading">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer class="footer">
+      Reef Scanner • <span class="live-dot"></span> Live • <a href="https://github.com/robbyrobaz/reef-scanner" target="_blank">GitHub</a>
+    </footer>
+  </div>
+  <script type="module" src="{{ base }}/static/js/app.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      if (window.app?.init) window.app.init();
+    });
+  </script>
+</body>
+</html>

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Tiny reverse proxy for Tailscale HTTPS URL.
-- /reef/*  → reef scanner on port 8891
-- /*       → openclaw gateway on port 18789
+Tailscale reverse proxy — strips /reef prefix before forwarding to reef dashboard.
+- /reef/* -> reef scanner (port 8891), strips /reef prefix so /reef/api -> /api
+- /*      -> openclaw gateway (port 18789)
 """
 import asyncio
 from asyncio import start_server
@@ -10,23 +10,11 @@ from asyncio import start_server
 REEF_PORT = 8891
 GATEWAY_PORT = 18789
 PROXY_PORT = 7891
-
-async def pipe(reader, writer):
-    try:
-        while True:
-            data = await reader.read(8192)
-            if not data:
-                break
-            writer.write(data)
-            await writer.drain()
-    except Exception:
-        pass
-    finally:
-        writer.close()
+REEF_PREFIX = b"/reef"
 
 async def handle(client_reader, client_writer):
     try:
-        # Read and parse request line
+        # Read request line
         line = await client_reader.readline()
         if not line:
             client_writer.close()
@@ -53,9 +41,9 @@ async def handle(client_reader, client_writer):
         if content_length > 0:
             body = await client_reader.readexactly(content_length)
 
-        # Route /reef/* to reef scanner
-        if path.startswith(b"/reef"):
-            target_path = path[len(b"/reef"):] or b"/"
+        # Route: strip /reef prefix for reef dashboard, pass through for gateway
+        if path.startswith(REEF_PREFIX):
+            target_path = path[len(REEF_PREFIX):] or b"/"
             target_port = REEF_PORT
         else:
             target_path = path
@@ -68,7 +56,7 @@ async def handle(client_reader, client_writer):
             client_writer.close()
             return
 
-        # Reconstruct request
+        # Forward request (with potentially modified path)
         new_req = method + b" " + target_path + b" " + version + b"\r\n"
         new_req += b"".join(headers_list)
         if not any(h.lower().startswith(b"host:") for h in headers_list):
@@ -77,11 +65,10 @@ async def handle(client_reader, client_writer):
         if body:
             new_req += body
 
-        # Send to target
         target_writer.write(new_req)
         await target_writer.drain()
 
-        # Stream response back
+        # Forward response back to client (streaming)
         try:
             while True:
                 data = await target_reader.read(8192)
@@ -102,7 +89,7 @@ async def main():
     server = await start_server(handle, "127.0.0.1", PROXY_PORT)
     addr = server.sockets[0].getsockname()
     print(f"Proxy running on http://{addr[0]}:{addr[1]}")
-    print(f"  /reef/*  -> reef scanner   (:{REEF_PORT})")
+    print(f"  /reef/*  -> reef scanner   (:{REEF_PORT}), strips /reef prefix")
     print(f"  /*       -> openclaw gateway (:{GATEWAY_PORT})")
     async with server:
         await server.serve_forever()

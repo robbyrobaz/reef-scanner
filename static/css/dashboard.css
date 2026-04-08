@@ -1,0 +1,181 @@
+/* ── Reset & Base ─────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:        #0d1117;
+  --surface:   #161b22;
+  --border:    #21262d;
+  --text:      #e6edf3;
+  --muted:     #7d8590;
+  --accent:    #58a6ff;
+  --green:     #3fb950;
+  --red:       #f85149;
+  --orange:    #d29922;
+  --purple:    #8957e5;
+  --radius:    8px;
+  font: 14px/1.5 system-ui, sans-serif;
+}
+
+body { background: var(--bg); color: var(--text); min-height: 100vh; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* ── Layout ───────────────────────────────────────────────── */
+#app { max-width: 1400px; margin: 0 auto; padding: 16px 20px; }
+
+/* ── Header ──────────────────────────────────────────────── */
+.header { margin-bottom: 16px; }
+.header h1 { font-size: 20px; font-weight: 700; margin-bottom: 6px; }
+.badge {
+  font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 20px;
+  background: var(--green); color: #0d1117; vertical-align: middle; margin-left: 8px;
+}
+.status-bar {
+  display: flex; gap: 20px; font-size: 12px; color: var(--muted); flex-wrap: wrap;
+}
+.status-bar span::after { content: '  '; }
+
+/* ── Tabs ─────────────────────────────────────────────────── */
+.tabs { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 1px solid var(--border); padding-bottom: 0; }
+.tab {
+  padding: 8px 20px; border-radius: 6px 6px 0 0; cursor: pointer; color: var(--muted);
+  font-weight: 600; font-size: 13px; border: 1px solid transparent; transition: color 0.15s, background 0.15s;
+  background: transparent; margin-bottom: -1px;
+}
+.tab:hover { color: var(--text); background: rgba(255,255,255,0.05); }
+.tab.active { color: var(--text); background: var(--surface); border-color: var(--border); border-bottom-color: var(--surface); }
+
+/* ── Tab Content ──────────────────────────────────────────── */
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+
+/* ── Sections ─────────────────────────────────────────────── */
+.section { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; }
+.section h2 { font-size: 14px; font-weight: 700; color: var(--text); margin-bottom: 12px; }
+.section h2 .sub { font-weight: 400; font-size: 12px; color: var(--muted); margin-left: 6px; }
+
+/* ── Stats Grid ───────────────────────────────────────────── */
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; text-align: center; }
+.stat-value { font-size: 24px; font-weight: 700; color: var(--text); line-height: 1.2; }
+.stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 4px; }
+
+/* ── DEX Grid ─────────────────────────────────────────────── */
+.dex-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+.dex-row { display: flex; justify-content: space-between; padding: 6px 10px; background: rgba(255,255,255,0.03); border-radius: 4px; font-size: 13px; }
+.dex-name { font-weight: 600; }
+.dex-pct { color: var(--muted); }
+
+/* ── Top Wallet Banner ─────────────────────────────────────── */
+.top-wallet-banner {
+  background: rgba(63,185,80,0.08); border: 1px solid rgba(63,185,80,0.3);
+  border-radius: var(--radius); padding: 12px 16px; margin-bottom: 12px;
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+}
+.top-wallet-banner .label { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--green); font-weight: 700; }
+.top-wallet-banner .address { font-size: 16px; font-weight: 700; color: var(--text); }
+.top-wallet-banner .metrics { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; }
+.top-wallet-banner .metric { color: var(--muted); }
+.top-wallet-banner .metric span { color: var(--text); font-weight: 600; }
+.top-wallet-banner .solscan-link { margin-left: auto; color: var(--accent); font-size: 12px; }
+
+/* ── Data Tables ──────────────────────────────────────────── */
+.data-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.data-table th {
+  text-align: left; padding: 8px 10px; background: rgba(255,255,255,0.03);
+  border-bottom: 1px solid var(--border); color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
+}
+.data-table td { padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,0.04); vertical-align: middle; }
+.data-table tr:hover td { background: rgba(255,255,255,0.02); }
+.data-table .mono { font-family: 'SF Mono', monospace; font-size: 11px; }
+.data-table .sm { font-size: 11px; color: var(--muted); }
+.data-table .pos { color: var(--green); }
+.data-table .neg { color: var(--red); }
+.data-table .buy { color: var(--green); font-weight: 700; }
+.data-table .sell { color: var(--red); font-weight: 700; }
+.data-table .loading, .data-table .empty { text-align: center; color: var(--muted); padding: 20px; }
+
+/* ── Buttons ───────────────────────────────────────────────── */
+.btn {
+  padding: 6px 14px; border-radius: 6px; font-size: 12px; font-weight: 700; cursor: pointer;
+  border: none; transition: background 0.15s, opacity 0.15s; display: inline-flex; align-items: center; gap: 6px;
+}
+.btn:hover { opacity: 0.85; }
+.btn-small { padding: 4px 10px; font-size: 11px; }
+.btn-primary { background: #1f6feb; color: #fff; }
+.btn-danger { background: var(--red); color: #fff; }
+.btn-ghost { background: rgba(255,255,255,0.07); color: var(--text); border: 1px solid var(--border); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ── Toggle Switch ────────────────────────────────────────── */
+.toggle-label { display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 13px; }
+.toggle-label input { display: none; }
+.toggle-switch {
+  position: relative; width: 40px; height: 22px; border-radius: 11px;
+  background: #30363d; transition: background 0.2s; flex-shrink: 0;
+}
+.toggle-switch::after {
+  content: ''; position: absolute; top: 3px; left: 3px;
+  width: 16px; height: 16px; border-radius: 50%; background: #7d8590; transition: transform 0.2s, background 0.2s;
+}
+input:checked + .toggle-switch { background: var(--green); }
+input:checked + .toggle-switch::after { transform: translateX(18px); background: #fff; }
+
+/* ── Form Controls ────────────────────────────────────────── */
+.form-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+input, select, textarea {
+  padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--bg); color: var(--text); font-size: 13px; font-family: inherit;
+}
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+.seed-input { width: 100%; font-family: 'SF Mono', monospace; font-size: 12px; resize: vertical; }
+.msg { font-size: 12px; margin-top: 6px; min-height: 16px; }
+.msg.ok { color: var(--green); }
+.msg.err { color: var(--red); }
+
+/* ── Wallet Status ────────────────────────────────────────── */
+.wallet-status .wallet-empty { text-align: center; padding: 20px 0; }
+.wallet-status .wallet-empty p { color: var(--muted); margin-bottom: 12px; }
+.wallet-status .wallet-info { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.wallet-status .wallet-addr { font-family: 'SF Mono', monospace; font-size: 14px; font-weight: 700; }
+
+/* ── Copy Controls Row ───────────────────────────────────── */
+.copy-controls-row { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+
+/* ── Copy Wallets Table ──────────────────────────────────── */
+.address-cell { font-family: 'SF Mono', monospace; font-size: 11px; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.address-cell a { color: var(--accent); }
+.alloc-input { width: 70px; padding: 4px 6px; font-size: 12px; border-radius: 4px; }
+
+/* ── Pagination ───────────────────────────────────────────── */
+.pagination { display: flex; align-items: center; gap: 8px; margin-top: 12px; justify-content: center; font-size: 12px; }
+.pagination button { padding: 4px 10px; border-radius: 4px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; font-size: 12px; }
+.pagination button:hover { background: rgba(255,255,255,0.1); }
+.pagination span { color: var(--muted); }
+
+/* ── Footer ───────────────────────────────────────────────── */
+.footer {
+  text-align: center; font-size: 11px; color: var(--muted); padding: 20px 0 8px;
+  border-top: 1px solid var(--border); margin-top: 16px;
+}
+.live-dot {
+  display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--green); margin-right: 4px; vertical-align: middle;
+  animation: pulse 2s infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; } 50% { opacity: 0.4; }
+}
+
+/* ── Scrollbar ────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: #30363d; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #484f58; }
+
+/* ── Responsive ────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .stats-grid { grid-template-columns: repeat(2, 1fr); }
+  .data-table { font-size: 11px; }
+  .data-table th, .data-table td { padding: 6px 8px; }
+}
