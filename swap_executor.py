@@ -33,9 +33,9 @@ import aiohttp
 DRY_RUN = True
 
 # ── Constants ───────────────────────────────────────────────────────────
-JUPITER_QUOTE_API = "https://quote-api.jup.ag/v6/quote"
-JUPITER_SWAP_API = "https://quote-api.jup.ag/v6/swap"
-JUPITER_PRICE_API = "https://quote-api.jup.ag/v6/price"
+JUPITER_QUOTE_API = "https://api.jup.ag/swap/v1/quote"
+JUPITER_SWAP_API = "https://api.jup.ag/swap/v1/swap"
+JUPITER_PRICE_API = "https://api.jup.ag/price/v2"
 SOL_MINT = "So11111111111111111111111111111111111111112"
 HELIUS_TX_URL = f"https://api.helius.xyz/v0/addresses/push?api-key={HELIUS_API_KEY}"
 
@@ -333,7 +333,6 @@ async def execute_swap_legacy(
         "outputMint": output_mint,
         "amount": amount_lamports,
         "slippageBps": slippage_bps,
-        "asLegacyTransaction": "true",
     }
     
     try:
@@ -356,32 +355,18 @@ async def execute_swap_legacy(
                     return SwapResult(success=False, error=f"Swap API error {resp.status}")
                 swap_data = await resp.json()
             
-            # Deserialize and sign
-            tx_bytes = base64.b64decode(swap_data["transaction"])
+            # Deserialize and sign (v1 API uses 'swapTransaction', v6 used 'transaction')
+            tx_b64 = swap_data.get("swapTransaction") or swap_data.get("transaction", "")
+            if not tx_b64:
+                return SwapResult(success=False, error=f"No transaction in swap response: {list(swap_data.keys())}")
+            tx_bytes = base64.b64decode(tx_b64)
             
-            # Parse the legacy transaction
-            from solders.transaction import Transaction
-            from solders.hash import Hash
-            tx = Transaction.from_bytes(tx_bytes)
+            # Jupiter v1 returns VersionedTransaction (MessageV0)
+            from solders.transaction import VersionedTransaction
+            unsigned_tx = VersionedTransaction.from_bytes(tx_bytes)
             
-            # Get fresh blockhash for signing
-            async with session.post(
-                HELIUS_RPC_URL,
-                json={
-                    "jsonrpc": "2.0", "id": 1,
-                    "method": "getLatestBlockhash",
-                    "params": [{"commitment": "confirmed"}],
-                },
-                timeout=aiohttp.ClientTimeout(total=5),
-            ) as bh_resp:
-                if bh_resp.status != 200:
-                    return SwapResult(success=False, error="Failed to get blockhash")
-                bh_data = await bh_resp.json()
-                blockhash_str = bh_data["result"]["value"]["blockhash"]
-                recent_blockhash = Hash.from_string(blockhash_str)
-            
-            # Sign with our keypair (mutates tx in place)
-            tx.sign([keypair], recent_blockhash)
+            # Re-sign: create new VersionedTransaction from message + our keypair
+            signed_tx = VersionedTransaction(unsigned_tx.message, [keypair])
             
             # Send
             async with session.post(
@@ -391,8 +376,8 @@ async def execute_swap_legacy(
                     "id": 1,
                     "method": "sendTransaction",
                     "params": [
-                        base64.b64encode(bytes(tx)).decode(),
-                        {"encoding": "base64", "skipPreFlight": False},
+                        base64.b64encode(bytes(signed_tx)).decode(),
+                        {"encoding": "base64", "skipPreFlight": True, "maxRetries": 3},
                     ],
                 },
                 timeout=aiohttp.ClientTimeout(total=30),

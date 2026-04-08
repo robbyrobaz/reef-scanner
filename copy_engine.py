@@ -419,6 +419,9 @@ async def run_engine_cycle(config: CopyConfig) -> int:
         except Exception as e:
             print(f"    ⚠️  Error checking {wallet_addr[:16]}...: {e}")
 
+        # Small delay between wallets to avoid Jupiter rate limits
+        await asyncio.sleep(0.5)
+
     if total > 0 or sigs_updated:
         save_copy_config(config)
         save_paper_positions(paper_positions)

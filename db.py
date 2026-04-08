@@ -108,9 +108,9 @@ def get_swaps_df(limit: int = 1000) -> pd.DataFrame:
     cap = min(limit, 5000)
     return get_db().execute(f"SELECT * FROM swaps ORDER BY block_time DESC LIMIT {cap}").df()
 
-def get_all_swaps_list(limit: int = 1000) -> list:
-    """Get recent swaps as list of dicts. Capped for performance."""
-    cap = min(limit, 5000)
+def get_all_swaps_list(limit: int = 1000000) -> list:
+    """Get swaps as list of dicts. Default: all swaps (for scanner recompute)."""
+    cap = limit
     con = get_db()
     rows = con.execute(f"SELECT * FROM swaps ORDER BY block_time DESC LIMIT {cap}").fetchall()
     cols = [d[0] for d in con.description]
