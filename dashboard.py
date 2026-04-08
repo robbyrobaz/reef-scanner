@@ -40,11 +40,12 @@ HELIUS_API_KEY = os.getenv("HELIUS_API_KEY", "")
 # ── FastAPI app ────────────────────────────────────────────────────────────────
 app = FastAPI(title="Reef Scanner + Copy Trading", version="2.0")
 
-# Static + templates mounted AFTER dashboard route so root "/" works at /reef/
+# Templates (inline CSS/JS now — no static file deps for the main page)
 jinja_env = jinja2.Environment(
     loader=jinja2.FileSystemLoader(str(BASE_DIR / "templates")),
     autoescape=jinja2.select_autoescape(['html', 'xml']),
 )
+# Keep static mount for any future assets
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
 # ── Data helpers ────────────────────────────────────────────────────────────────

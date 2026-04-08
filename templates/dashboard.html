@@ -4,127 +4,704 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>🏄 Reef Scanner + Copy Trading</title>
-  <link rel="stylesheet" href="{{ base }}/static/css/dashboard.css">
+  <style>
+    :root {
+      --bg: #0d1117; --bg2: #161b22; --bg3: #1c2128;
+      --border: #30363d; --text: #e6edf3; --muted: #7d8590;
+      --green: #3fb950; --red: #f85149; --orange: #d29922;
+      --blue: #58a6ff; --purple: #bc8cff;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; font-size: 14px; min-height: 100vh; }
+    a { color: var(--blue); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* Header */
+    .header { padding: 16px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+    .header h1 { font-size: 18px; font-weight: 700; white-space: nowrap; }
+    .badge { font-size: 10px; padding: 2px 8px; border-radius: 10px; background: var(--green); color: #000; font-weight: 700; vertical-align: middle; margin-left: 8px; }
+    .badge.off { background: var(--muted); }
+    .status-bar { display: flex; gap: 16px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
+    .status-bar span { white-space: nowrap; }
+
+    /* Tabs */
+    .tabs { display: flex; border-bottom: 1px solid var(--border); padding: 0 24px; }
+    .tab { padding: 10px 20px; cursor: pointer; border: none; background: none; color: var(--muted); font-size: 14px; font-weight: 600; border-bottom: 2px solid transparent; transition: all .15s; }
+    .tab:hover { color: var(--text); }
+    .tab.active { color: var(--text); border-bottom-color: var(--blue); }
+
+    /* Tab content */
+    .tab-content { display: none; padding: 20px 24px; }
+    .tab-content.active { display: block; }
+
+    /* Stats grid */
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 20px; }
+    .stat-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 14px; text-align: center; }
+    .stat-value { font-size: 22px; font-weight: 700; color: var(--green); }
+    .stat-label { font-size: 11px; color: var(--muted); margin-top: 4px; text-transform: uppercase; }
+
+    /* Section */
+    .section { margin-bottom: 24px; }
+    .section h2 { font-size: 15px; font-weight: 700; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+    .sub { font-weight: 400; color: var(--muted); font-size: 12px; }
+
+    /* DEX grid */
+    .dex-grid { display: flex; gap: 12px; flex-wrap: wrap; }
+    .dex-chip { background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: 8px 14px; font-size: 13px; }
+    .dex-chip .name { font-weight: 600; }
+    .dex-chip .ct { color: var(--muted); margin-left: 6px; }
+
+    /* Top wallet banner */
+    .top-banner { background: linear-gradient(135deg, #1a1f35, #0d1117); border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; margin-bottom: 16px; }
+    .top-banner .label { font-size: 11px; color: var(--orange); font-weight: 700; text-transform: uppercase; margin-bottom: 6px; }
+    .top-banner .addr { font-family: monospace; font-size: 15px; color: var(--blue); }
+    .top-banner .metrics { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 8px; font-size: 13px; }
+    .top-banner .metric span { font-weight: 600; }
+
+    /* Tables */
+    .data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .data-table th { text-align: left; padding: 8px 10px; color: var(--muted); font-size: 11px; text-transform: uppercase; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    .data-table td { padding: 7px 10px; border-bottom: 1px solid #21262d; vertical-align: middle; }
+    .data-table tr:hover { background: rgba(88,166,255,0.04); }
+    .mono { font-family: monospace; font-size: 12px; }
+    .sm { font-size: 12px; }
+    .buy { color: var(--green); font-weight: 600; }
+    .sell { color: var(--red); font-weight: 600; }
+    .pos { color: var(--green); }
+    .neg { color: var(--red); }
+    .empty, .loading { color: var(--muted); text-align: center; padding: 20px !important; }
+
+    /* Buttons */
+    .btn { padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg2); color: var(--text); cursor: pointer; font-size: 12px; font-weight: 600; transition: all .15s; }
+    .btn:hover { background: var(--bg3); }
+    .btn-primary { background: var(--blue); color: #000; border-color: var(--blue); }
+    .btn-primary:hover { opacity: 0.85; }
+    .btn-danger { background: transparent; color: var(--red); border-color: var(--red); }
+    .btn-danger:hover { background: rgba(248,81,73,0.15); }
+    .btn-ghost { background: transparent; border-color: transparent; }
+    .btn-small { padding: 3px 10px; font-size: 11px; }
+
+    /* Copy trading controls */
+    .controls-row { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; padding: 12px 16px; background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 16px; }
+    .toggle-wrap { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+    .toggle-wrap input[type="checkbox"] { width: 36px; height: 20px; -webkit-appearance: none; appearance: none; background: #30363d; border-radius: 10px; position: relative; cursor: pointer; transition: background .2s; }
+    .toggle-wrap input[type="checkbox"]:checked { background: var(--green); }
+    .toggle-wrap input[type="checkbox"]::after { content: ''; position: absolute; width: 16px; height: 16px; border-radius: 50%; background: #fff; top: 2px; left: 2px; transition: left .2s; }
+    .toggle-wrap input[type="checkbox"]:checked::after { left: 18px; }
+
+    /* Add wallet row */
+    .add-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+    .add-row input[type="text"] { flex: 1; min-width: 200px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 13px; font-family: monospace; }
+    .add-row input[type="number"] { width: 90px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 13px; }
+    .alloc-input { width: 80px; padding: 4px 6px; border-radius: 4px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 12px; text-align: center; }
+    .msg { font-size: 12px; margin-left: 8px; }
+    .msg.ok { color: var(--green); }
+    .msg.err { color: var(--red); }
+
+    /* Wallet status */
+    .wallet-box { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 14px 18px; }
+    .wallet-addr { font-family: monospace; color: var(--blue); font-size: 14px; }
+    .seed-input { width: 100%; padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 13px; font-family: monospace; resize: none; margin-bottom: 8px; }
+    .form-row { display: flex; gap: 8px; align-items: center; }
+    .form-row input { flex: 1; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 13px; }
+
+    /* Footer */
+    .footer { padding: 16px 24px; border-top: 1px solid var(--border); text-align: center; font-size: 12px; color: var(--muted); }
+    .live-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+    /* Swap filter */
+    .swap-controls { display: flex; gap: 12px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+    .swap-controls select { padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 12px; }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      .header, .tabs, .tab-content { padding-left: 12px; padding-right: 12px; }
+      .stats-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+  </style>
 </head>
 <body>
-  <div id="app">
-    <!-- Header -->
-    <header class="header">
-      <div class="header-left">
-        <h1>🏄 REEF SCANNER <span id="mode-badge" class="badge">COPY ACTIVE</span></h1>
-        <div class="status-bar">
-          <span>Last scan: <span id="last-scan">—</span></span>
-          <span>Swaps: <span id="total-swaps">—</span></span>
-          <span>Wallets: <span id="total-wallets">—</span></span>
-          <span>Up: <span id="uptime">0m 0s</span></span>
+  <header class="header">
+    <div>
+      <h1>🏄 REEF SCANNER <span id="mode-badge" class="badge">SCANNING</span></h1>
+      <div class="status-bar">
+        <span>Last scan: <strong id="last-scan">—</strong></span>
+        <span>Swaps: <strong id="total-swaps">—</strong></span>
+        <span>Wallets: <strong id="total-wallets">—</strong></span>
+        <span>Up: <strong id="uptime">0m 0s</strong></span>
+      </div>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="discovery" onclick="switchTab('discovery')">🔍 Discovery</button>
+    <button class="tab" data-tab="copy" onclick="switchTab('copy')">🤝 Copy Trading</button>
+  </nav>
+
+  <!-- ===== DISCOVERY TAB ===== -->
+  <section id="tab-discovery" class="tab-content active">
+    <div class="stats-grid">
+      <div class="stat-card"><div class="stat-value" id="stat-swaps">—</div><div class="stat-label">Total Swaps</div></div>
+      <div class="stat-card"><div class="stat-value" id="stat-wallets">—</div><div class="stat-label">Wallets Found</div></div>
+      <div class="stat-card"><div class="stat-value" id="stat-qualified">—</div><div class="stat-label">Qualified</div></div>
+      <div class="stat-card"><div class="stat-value" id="stat-buy-pct">—</div><div class="stat-label">Buy %</div></div>
+    </div>
+
+    <div class="section">
+      <h2>🔥 DEX BREAKDOWN</h2>
+      <div id="dex-breakdown" class="dex-grid"></div>
+    </div>
+
+    <div class="section">
+      <h2>🏆 TOP WALLET <span class="sub">#1 by score</span></h2>
+      <div id="top-wallet-banner" class="top-banner" style="display:none;"></div>
+    </div>
+
+    <div class="section">
+      <h2>📊 TOP WALLETS <span class="sub" id="wallets-count"></span></h2>
+      <table class="data-table">
+        <thead><tr><th>Address</th><th>Score</th><th>Trades</th><th>Win%</th><th>PF</th><th>ROI</th><th>Token</th><th>Last Active</th><th></th></tr></thead>
+        <tbody id="top-wallets-body"><tr><td colspan="9" class="loading">Loading…</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="section">
+      <h2>💱 RECENT SWAPS <span class="sub" id="swaps-count"></span></h2>
+      <div class="swap-controls">
+        <label>Filter: <select id="swap-token-filter" onchange="filterSwaps()"><option value="">All tokens</option></select></label>
+        <button class="btn btn-small" onclick="loadDiscovery()">↻ Refresh</button>
+      </div>
+      <table class="data-table">
+        <thead><tr><th>Time</th><th>Action</th><th>Token</th><th>Amt</th><th>SOL</th><th>DEX</th><th>Sig</th></tr></thead>
+        <tbody id="swaps-body"><tr><td colspan="7" class="loading">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ===== COPY TRADING TAB ===== -->
+  <section id="tab-copy" class="tab-content">
+    <div class="section">
+      <h2>👛 YOUR WALLET</h2>
+      <div id="wallet-status" class="wallet-box"></div>
+    </div>
+
+    <div class="section">
+      <h2>⚙️ CONTROLS</h2>
+      <div class="controls-row">
+        <div class="toggle-wrap">
+          <span>Copy Trading</span>
+          <input type="checkbox" id="global-toggle" onchange="toggleGlobal()">
+        </div>
+        <div class="toggle-wrap">
+          <span>Live Mode</span>
+          <input type="checkbox" id="live-toggle" onchange="toggleMode()">
+        </div>
+        <div style="margin-left:auto;display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);">
+          Default alloc:
+          <input type="number" id="default-alloc" value="0.01" step="0.001" min="0.001" max="1" class="alloc-input">
+          SOL
         </div>
       </div>
-    </header>
+    </div>
 
-    <!-- Tabs -->
-    <nav class="tabs">
-      <button class="tab active" data-tab="discovery" onclick="app.switchTab('discovery')">🔍 Discovery</button>
-      <button class="tab" data-tab="copy" onclick="app.switchTab('copy')">🤝 Copy Trading</button>
-    </nav>
-
-    <!-- ===== DISCOVERY TAB ===== -->
-    <section id="tab-discovery" class="tab-content active">
-      <div class="stats-grid">
-        <div class="stat-card"><div class="stat-value" id="stat-swaps">—</div><div class="stat-label">Total Swaps</div></div>
-        <div class="stat-card"><div class="stat-value" id="stat-wallets">—</div><div class="stat-label">Wallets Found</div></div>
-        <div class="stat-card"><div class="stat-value" id="stat-qualified">—</div><div class="stat-label">Qualified</div></div>
-        <div class="stat-card"><div class="stat-value" id="stat-buy-pct">—</div><div class="stat-label">Buy %</div></div>
+    <div class="section">
+      <h2>📋 ENABLED COPIES <span id="copy-count" class="sub">(0)</span></h2>
+      <table class="data-table">
+        <thead><tr><th>Address</th><th>Enabled</th><th>Alloc SOL</th><th>Last Sig</th><th>Last Copied</th><th>Actions</th></tr></thead>
+        <tbody id="copy-wallets-body"><tr><td colspan="6" class="loading">Loading…</td></tr></tbody>
+      </table>
+      <div class="add-row" id="add-wallet-row">
+        <input type="text" id="add-wallet-addr" placeholder="Solana wallet address (e.g. 7xKX...)">
+        <input type="number" id="add-wallet-alloc" value="0.01" step="0.001" min="0.001">
+        <span style="color:var(--muted);font-size:12px;">SOL</span>
+        <button class="btn btn-primary btn-small" onclick="addCopyWallet()">+ Add Wallet</button>
+        <span id="add-wallet-msg" class="msg"></span>
       </div>
+    </div>
 
-      <div class="section">
-        <h2>🔥 DEX BREAKDOWN</h2>
-        <div id="dex-breakdown" class="dex-grid"></div>
+    <div class="section">
+      <h2>📜 COPY TRADE LOG <span id="trade-log-count" class="sub">(0)</span></h2>
+      <table class="data-table">
+        <thead><tr><th>Time</th><th>Action</th><th>Source</th><th>Token</th><th>Amt (orig→copy)</th><th>Status</th><th>Sig</th></tr></thead>
+        <tbody id="copy-trades-body"><tr><td colspan="7" class="loading">Loading…</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="section">
+      <h2>📈 YOUR STATS</h2>
+      <div class="stats-grid" id="copy-stats-grid">
+        <div class="stat-card"><div class="stat-value" id="cs-pnl">—</div><div class="stat-label">PnL (SOL)</div></div>
+        <div class="stat-card"><div class="stat-value" id="cs-winrate">—</div><div class="stat-label">Win Rate</div></div>
+        <div class="stat-card"><div class="stat-value" id="cs-trades">—</div><div class="stat-label">Total Trades</div></div>
+        <div class="stat-card"><div class="stat-value" id="cs-pf">—</div><div class="stat-label">Profit Factor</div></div>
       </div>
+    </div>
+  </section>
 
-      <div class="section">
-        <h2>🏆 TOP WALLET <span class="sub">#1 by score</span></h2>
-        <div id="top-wallet-banner" class="top-wallet-banner"></div>
-        <table class="data-table" id="top-wallets-table">
-          <thead><tr><th>Address</th><th>Score</th><th>Trades</th><th>Win%</th><th>PF</th><th>ROI</th><th>Token</th><th>Last Active</th><th></th></tr></thead>
-          <tbody id="top-wallets-body"><tr><td colspan="9" class="loading">Loading…</td></tr></tbody>
-        </table>
-      </div>
+  <footer class="footer">
+    Reef Scanner • <span class="live-dot"></span> Live • <a href="https://github.com/robbyrobaz/reef-scanner" target="_blank">GitHub</a>
+  </footer>
 
-      <div class="section">
-        <h2>💱 RECENT SWAPS <span class="sub">(last 50)</span></h2>
-        <div class="swap-controls">
-          <label>Filter by token:
-            <select id="swap-token-filter" onchange="discovery.filterSwaps()">
-              <option value="">All</option>
-            </select>
-          </label>
-          <button class="btn btn-small" onclick="discovery.loadSwaps()">↻ Refresh</button>
-        </div>
-        <table class="data-table">
-          <thead><tr><th>Time</th><th>Action</th><th>Token</th><th>Amt</th><th>SOL</th><th>DEX</th><th>Sig</th></tr></thead>
-          <tbody id="swaps-body"><tr><td colspan="7" class="loading">Loading…</td></tr></tbody>
-        </table>
-      </div>
-    </section>
+<script>
+/* ========================================================================
+   Reef Dashboard — Single-file vanilla JS, zero dependencies, zero modules.
+   All API calls use BASE derived from window.location.
+   ======================================================================== */
 
-    <!-- ===== COPY TRADING TAB ===== -->
-    <section id="tab-copy" class="tab-content">
-      <div class="section">
-        <h2>👛 YOUR WALLET</h2>
-        <div id="wallet-status"></div>
-      </div>
+const BASE = '';  // empty = same origin; Jinja can set '{{ base }}' if needed
+const uptimeStart = Date.now();
+let currentTab = localStorage.getItem('reef_tab') || 'discovery';
+let allSwapsCache = [];
 
-      <div class="section">
-        <h2>⚙️ CONTROLS</h2>
-        <div class="copy-controls-row">
-          <label class="toggle-label">
-            <span>Copy Trading</span>
-            <input type="checkbox" id="global-toggle" onchange="copyTrading.toggleGlobal()">
-            <span class="toggle-switch"></span>
-          </label>
-          <label class="toggle-label">
-            <span>Live Mode</span>
-            <input type="checkbox" id="live-toggle" onchange="copyTrading.toggleMode()">
-            <span class="toggle-switch"></span>
-          </label>
-          <div style="margin-left:auto;display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);">
-            Alloc/Src:
-            <input type="number" id="default-alloc" value="0.01" step="0.001" min="0.001" max="1"
-              style="width:70px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);"
-              onchange="copyTrading.setDefaultAlloc(this.value)">
-          </div>
-        </div>
-      </div>
+// ── Helpers ────────────────────────────────────────────────────────────────
+function $(id) { return document.getElementById(id); }
+function fmt(n) { return n != null ? Number(n).toLocaleString() : '—'; }
+function trunc(s, n) { if (!s) return '—'; return s.length <= n ? s : s.slice(0, n) + '…'; }
+function fmtAmt(raw) {
+  if (!raw) return '—';
+  const n = Number(raw);
+  if (n >= 1e9) return (n/1e9).toFixed(2)+'B';
+  if (n >= 1e6) return (n/1e6).toFixed(2)+'M';
+  if (n >= 1e3) return (n/1e3).toFixed(2)+'K';
+  return n.toFixed(2);
+}
+function fmtTime(ts) {
+  if (!ts) return '—';
+  const d = new Date(Number(ts) * 1000);
+  if (isNaN(d.getTime())) return '—';
+  return d.toLocaleTimeString('en-US', {hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit'});
+}
+function fmtDate(ts) {
+  if (!ts) return '—';
+  const d = new Date(Number(ts) * 1000);
+  if (isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString() + ' ' + d.toLocaleTimeString('en-US', {hour12:false, hour:'2-digit', minute:'2-digit'});
+}
+function timeAgo(epoch) {
+  if (!epoch || epoch === 0) return 'never';
+  const ms = Date.now() - (epoch * 1000);
+  const mins = Math.floor(ms / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return mins + 'm ago';
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return hrs + 'h ago';
+  return Math.floor(hrs / 24) + 'd ago';
+}
+function fmtROI(val) {
+  const n = Number(val);
+  if (isNaN(n)) return '—';
+  if (!isFinite(n)) return '∞';
+  return n.toFixed(2);
+}
+function scoreColor(s) { return s >= 0.9 ? 'var(--green)' : s >= 0.8 ? 'var(--orange)' : 'var(--muted)'; }
+function wrColor(w) { return w >= 0.8 ? 'var(--green)' : w >= 0.5 ? 'var(--orange)' : 'var(--red)'; }
 
-      <div class="section">
-        <h2>📋 ENABLED COPY TRADES <span id="copy-count" class="sub">(0)</span></h2>
-        <table class="data-table">
-          <thead><tr><th>Address</th><th>Alloc SOL</th><th>Last Sig</th><th>Last Copied</th><th>Actions</th></tr></thead>
-          <tbody id="copy-wallets-body">
-            <tr><td colspan="5" class="loading">Loading…</td></tr>
-          </tbody>
-        </table>
-        <div id="add-wallet-container" style="margin-top:8px;"></div>
-      </div>
+// ── API ────────────────────────────────────────────────────────────────────
+async function api(path, opts) {
+  try {
+    const res = await fetch(BASE + path, opts || {});
+    if (!res.ok) throw new Error(res.status + ' ' + res.statusText);
+    return await res.json();
+  } catch (e) {
+    console.error('API error:', path, e);
+    throw e;
+  }
+}
 
-      <div class="section">
-        <h2>📜 COPY TRADE LOG <span id="trade-log-count" class="sub">(0)</span></h2>
-        <table class="data-table">
-          <thead><tr><th>Time</th><th>Action</th><th>Source</th><th>Token</th><th>Amt (orig→copy)</th><th>Status</th><th>Sig</th></tr></thead>
-          <tbody id="copy-trades-body"><tr><td colspan="7" class="loading">Loading…</td></tr></tbody>
-        </table>
-      </div>
-    </section>
+// ── Tab Switching ──────────────────────────────────────────────────────────
+function switchTab(name) {
+  currentTab = name;
+  localStorage.setItem('reef_tab', name);
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === 'tab-' + name));
+  if (name === 'discovery') loadDiscovery();
+  if (name === 'copy') loadCopyTab();
+}
 
-    <footer class="footer">
-      Reef Scanner • <span class="live-dot"></span> Live • <a href="https://github.com/robbyrobaz/reef-scanner" target="_blank">GitHub</a>
-    </footer>
-  </div>
-  <script type="module" src="{{ base }}/static/js/app.js"></script>
-  <script>
-    document.addEventListener('DOMContentLoaded', () => {
-      if (window.app?.init) window.app.init();
+// ── Uptime ─────────────────────────────────────────────────────────────────
+function updateUptime() {
+  const sec = Math.floor((Date.now() - uptimeStart) / 1000);
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  const el = $('uptime');
+  if (el) el.textContent = h > 0 ? h+'h '+m+'m' : m+'m '+s+'s';
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// DISCOVERY TAB
+// ══════════════════════════════════════════════════════════════════════════
+async function loadDiscovery() {
+  try {
+    const stats = await api('/api/stats');
+    renderHeader(stats);
+    renderDEX(stats);
+    renderTopBanner(stats);
+    renderWallets(stats);
+    renderSwaps(stats);
+  } catch (e) {
+    console.error('loadDiscovery failed:', e);
+  }
+}
+
+function renderHeader(s) {
+  if (!s) return;
+  $('total-swaps').textContent = fmt(s.total_swaps);
+  $('total-wallets').textContent = fmt(s.total_wallets);
+  $('last-scan').textContent = s.last_scan ? fmtDate(s.last_scan) : '—';
+  $('stat-swaps').textContent = fmt(s.total_swaps);
+  $('stat-wallets').textContent = fmt(s.total_wallets);
+  $('stat-qualified').textContent = fmt(s.qualified_wallets);
+  const buys = s.buys || 0, sells = s.sells || 0, total = buys + sells;
+  $('stat-buy-pct').textContent = total > 0 ? ((buys/total)*100).toFixed(1) + '%' : '0%';
+  // Badge
+  const badge = $('mode-badge');
+  if (badge) { badge.textContent = 'SCANNING'; badge.className = 'badge'; }
+}
+
+function renderDEX(s) {
+  const el = $('dex-breakdown');
+  if (!el || !s.dex_counts) return;
+  const total = Object.values(s.dex_counts).reduce((a,b) => a+b, 0);
+  el.innerHTML = Object.entries(s.dex_counts).map(([dex, ct]) => {
+    const pct = total > 0 ? ((ct/total)*100).toFixed(1) : '0';
+    return '<div class="dex-chip"><span class="name">' + dex + '</span><span class="ct">' + fmt(ct) + ' (' + pct + '%)</span></div>';
+  }).join('');
+}
+
+function renderTopBanner(s) {
+  const el = $('top-wallet-banner');
+  const top = s.top_wallets && s.top_wallets[0];
+  if (!el || !top) { if (el) el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  const sc = Number(top.score), wr = Number(top.win_rate), pf = top.profit_factor;
+  el.innerHTML =
+    '<div class="label">🔥 #1 WALLET</div>' +
+    '<a class="addr" href="' + (top.solscan_link||'#') + '" target="_blank">' + trunc(top.address, 20) + '</a>' +
+    '<div class="metrics">' +
+      '<div class="metric">Score: <span style="color:' + scoreColor(sc) + '">' + sc.toFixed(3) + '</span></div>' +
+      '<div class="metric">Win: <span style="color:' + wrColor(wr) + '">' + (wr*100).toFixed(1) + '%</span></div>' +
+      '<div class="metric">PF: <span>' + (pf == 999 || pf == '999.0' ? '∞' : Number(pf).toFixed(2)) + '</span></div>' +
+      '<div class="metric">ROI: <span class="' + (Number(top.avg_roi)>=0?'pos':'neg') + '">' + fmtROI(top.avg_roi) + '%</span></div>' +
+      '<div class="metric">Token: <span>' + (top.favorite_token||'—') + '</span></div>' +
+    '</div>' +
+    '<div style="margin-top:8px"><button class="btn btn-primary btn-small" onclick="addFromDiscovery(\'' + top.address + '\', this)">📋 Copy Trade</button></div>';
+}
+
+function renderWallets(s) {
+  const wallets = s.top_wallets || [];
+  const body = $('top-wallets-body');
+  const ct = $('wallets-count');
+  if (ct) ct.textContent = '(' + wallets.length + ')';
+  if (!body) return;
+  if (!wallets.length) { body.innerHTML = '<tr><td colspan="9" class="empty">No wallets yet</td></tr>'; return; }
+  body.innerHTML = wallets.map(w => {
+    const sc = Number(w.score), wr = Number(w.win_rate);
+    const pf = w.profit_factor == 999 || w.profit_factor == '999.0' ? '∞' : Number(w.profit_factor).toFixed(2);
+    return '<tr>' +
+      '<td class="mono"><a href="' + (w.solscan_link||'#') + '" target="_blank">' + trunc(w.address, 14) + '</a></td>' +
+      '<td><span style="color:' + scoreColor(sc) + '">' + sc.toFixed(3) + '</span></td>' +
+      '<td>' + (w.total_trades||0) + '</td>' +
+      '<td><span style="color:' + wrColor(wr) + '">' + (wr*100).toFixed(1) + '%</span></td>' +
+      '<td>' + pf + '</td>' +
+      '<td class="' + (Number(w.avg_roi)>=0?'pos':'neg') + '">' + fmtROI(w.avg_roi) + '%</td>' +
+      '<td class="sm">' + (w.favorite_token||'—') + '</td>' +
+      '<td class="sm">' + (w.last_active ? timeAgoISO(w.last_active) : '—') + '</td>' +
+      '<td><button class="btn btn-primary btn-small" onclick="addFromDiscovery(\'' + w.address + '\', this)">📋 Copy</button></td>' +
+    '</tr>';
+  }).join('');
+}
+
+function timeAgoISO(isoStr) {
+  if (!isoStr || isoStr === 'N/A') return '—';
+  const ms = Date.now() - new Date(isoStr).getTime();
+  if (isNaN(ms)) return '—';
+  const mins = Math.floor(ms / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return mins + 'm ago';
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return hrs + 'h ago';
+  return Math.floor(hrs / 24) + 'd ago';
+}
+
+function renderSwaps(s) {
+  allSwapsCache = s.recent_swaps || [];
+  const ct = $('swaps-count');
+  if (ct) ct.textContent = '(' + allSwapsCache.length + ')';
+  displaySwaps(allSwapsCache);
+  // Populate token filter
+  const filter = $('swap-token-filter');
+  if (filter) {
+    const cur = filter.value;
+    const tokens = [...new Set(allSwapsCache.map(s => s.token_mint).filter(Boolean))];
+    filter.innerHTML = '<option value="">All tokens</option>' +
+      tokens.slice(0, 50).map(t => '<option value="' + t + '">' + trunc(t, 16) + '</option>').join('');
+    filter.value = cur;
+  }
+}
+
+function displaySwaps(swaps) {
+  const body = $('swaps-body');
+  if (!body) return;
+  if (!swaps.length) { body.innerHTML = '<tr><td colspan="7" class="empty">No swaps yet</td></tr>'; return; }
+  body.innerHTML = swaps.map(s => {
+    const solAmt = Number(s.amount_sol);
+    const solDisplay = solAmt > 1e6 ? (solAmt/1e9).toFixed(4) : solAmt.toFixed(4);
+    return '<tr>' +
+      '<td class="sm">' + fmtTime(s.block_time) + '</td>' +
+      '<td class="' + (s.action==='BUY'?'buy':'sell') + '">' + (s.action||'?') + '</td>' +
+      '<td class="mono sm">' + trunc(s.token_mint, 12) + '</td>' +
+      '<td>' + fmtAmt(s.amount) + '</td>' +
+      '<td>' + solDisplay + ' SOL</td>' +
+      '<td class="sm">' + (s.dex||'?') + '</td>' +
+      '<td class="mono sm"><a href="' + (s.solscan_sig||'https://solscan.io/tx/'+s.signature) + '" target="_blank">' + trunc(s.signature, 12) + '</a></td>' +
+    '</tr>';
+  }).join('');
+}
+
+function filterSwaps() {
+  const val = $('swap-token-filter')?.value || '';
+  const filtered = val ? allSwapsCache.filter(s => s.token_mint === val) : allSwapsCache;
+  displaySwaps(filtered);
+}
+
+// Add wallet from discovery tab
+async function addFromDiscovery(addr, btn) {
+  try {
+    await api('/api/copy/wallet', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({address: addr, alloc_sol: 0.01}),
     });
-  </script>
+    if (btn) { btn.textContent = '✓ Added'; btn.disabled = true; btn.className = 'btn btn-ghost btn-small'; }
+  } catch (e) {
+    alert('Failed: ' + e.message);
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// COPY TRADING TAB
+// ══════════════════════════════════════════════════════════════════════════
+let copyConfig = null;
+
+async function loadCopyTab() {
+  await Promise.all([loadCopyConfig(), loadCopyTrades(), loadCopyStats()]);
+}
+
+async function loadCopyConfig() {
+  try {
+    copyConfig = await api('/api/copy/config');
+    renderWalletStatus();
+    renderControls();
+    renderCopyWallets();
+  } catch (e) {
+    console.error('loadCopyConfig failed:', e);
+  }
+}
+
+function renderWalletStatus() {
+  const el = $('wallet-status');
+  if (!el || !copyConfig) return;
+  if (!copyConfig.user_wallet) {
+    el.innerHTML =
+      '<p style="color:var(--muted);margin-bottom:10px;">No wallet configured. Paste seed phrase to enable live trading.</p>' +
+      '<textarea id="seed-phrase-input" class="seed-input" rows="2" placeholder="word1 word2 ... (24 words, space separated)"></textarea>' +
+      '<div class="form-row">' +
+        '<input type="password" id="wallet-alias" placeholder="Alias (e.g. main hot wallet)">' +
+        '<button class="btn btn-primary" onclick="saveWallet()">💾 Save Wallet</button>' +
+      '</div>' +
+      '<div id="wallet-save-msg" class="msg" style="margin-top:6px;"></div>';
+  } else {
+    el.innerHTML =
+      '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">' +
+        '<span class="wallet-addr">' + trunc(copyConfig.user_wallet, 20) + '</span>' +
+        '<span class="sm" style="color:var(--muted)">' + (copyConfig.trade_mode||'paper') + ' mode</span>' +
+        '<button class="btn btn-ghost btn-small" onclick="disconnectWallet()">✕ Remove</button>' +
+      '</div>';
+  }
+}
+
+async function saveWallet() {
+  const phrase = $('seed-phrase-input')?.value.trim();
+  const msg = $('wallet-save-msg');
+  if (!phrase) { if (msg) { msg.textContent='Enter a seed phrase'; msg.className='msg err'; } return; }
+  if (phrase.split(/\s+/).length < 24) { if (msg) { msg.textContent='Need 24-25 words'; msg.className='msg err'; } return; }
+  try {
+    const res = await api('/api/wallet/verify', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({phrase}),
+    });
+    if (msg) { msg.textContent = 'Wallet saved: ' + trunc(res.address, 16); msg.className = 'msg ok'; }
+    await loadCopyConfig();
+  } catch (e) {
+    if (msg) { msg.textContent = 'Error: ' + e.message; msg.className = 'msg err'; }
+  }
+}
+
+async function disconnectWallet() {
+  if (!confirm('Remove wallet from config?')) return;
+  await api('/api/wallet/disconnect', {method:'POST'});
+  await loadCopyConfig();
+}
+
+function renderControls() {
+  if (!copyConfig) return;
+  const gt = $('global-toggle');
+  const lt = $('live-toggle');
+  const da = $('default-alloc');
+  if (gt) gt.checked = copyConfig.global_enabled || false;
+  if (lt) lt.checked = copyConfig.trade_mode === 'live';
+  if (da) da.value = copyConfig.default_alloc || 0.01;
+  // Update badge
+  const badge = $('mode-badge');
+  if (badge && copyConfig.global_enabled) {
+    badge.textContent = copyConfig.trade_mode === 'live' ? 'LIVE COPY' : 'PAPER COPY';
+    badge.className = 'badge' + (copyConfig.trade_mode === 'live' ? '' : '');
+  }
+}
+
+async function toggleGlobal() {
+  await api('/api/copy/global-toggle', {method:'POST'});
+  await loadCopyConfig();
+}
+
+async function toggleMode() {
+  const live = $('live-toggle')?.checked;
+  await api('/api/trade/mode', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({mode: live ? 'live' : 'paper'}),
+  });
+  await loadCopyConfig();
+}
+
+// ── Copy Wallets Table ─────────────────────────────────────────────────────
+function renderCopyWallets() {
+  if (!copyConfig) return;
+  const copies = Object.entries(copyConfig.copies || {});
+  const body = $('copy-wallets-body');
+  const ct = $('copy-count');
+  if (ct) ct.textContent = '(' + copies.length + ')';
+  if (!body) return;
+
+  if (!copies.length) {
+    body.innerHTML = '<tr><td colspan="6" class="empty">No wallets being copied. Add one below or from Discovery tab.</td></tr>';
+    return;
+  }
+
+  body.innerHTML = copies.map(([addr, info]) => {
+    const enabled = info.enabled !== false;
+    return '<tr>' +
+      '<td class="mono"><a href="https://solscan.io/account/' + addr + '" target="_blank">' + trunc(addr, 16) + '</a></td>' +
+      '<td><span style="color:' + (enabled?'var(--green)':'var(--red)') + '">' + (enabled?'✅ On':'❌ Off') + '</span></td>' +
+      '<td><input type="number" class="alloc-input" value="' + (info.alloc_sol||0.01) + '" step="0.001" min="0.001" onchange="setAlloc(\'' + addr + '\', this.value)"></td>' +
+      '<td class="mono sm">' + trunc(info.last_sig, 14) + '</td>' +
+      '<td class="sm">' + timeAgo(info.last_copy_ts) + '</td>' +
+      '<td>' +
+        '<button class="btn btn-ghost btn-small" onclick="toggleCopyWallet(\'' + addr + '\')">' + (enabled?'Disable':'Enable') + '</button> ' +
+        '<button class="btn btn-danger btn-small" onclick="removeCopyWallet(\'' + addr + '\')">✕ Remove</button>' +
+      '</td>' +
+    '</tr>';
+  }).join('');
+}
+
+async function addCopyWallet() {
+  const addr = $('add-wallet-addr')?.value.trim();
+  const alloc = parseFloat($('add-wallet-alloc')?.value || '0.01');
+  const msg = $('add-wallet-msg');
+  if (!addr) { if (msg) { msg.textContent='Enter an address'; msg.className='msg err'; } return; }
+  if (addr.length < 32 || addr.length > 44) { if (msg) { msg.textContent='Invalid Solana address'; msg.className='msg err'; } return; }
+  try {
+    await api('/api/copy/wallet', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({address: addr, alloc_sol: alloc}),
+    });
+    if (msg) { msg.textContent = '✓ Added!'; msg.className = 'msg ok'; }
+    $('add-wallet-addr').value = '';
+    await loadCopyConfig();
+  } catch (e) {
+    if (msg) { msg.textContent = 'Error: ' + e.message; msg.className = 'msg err'; }
+  }
+}
+
+async function toggleCopyWallet(addr) {
+  await api('/api/copy/wallet/' + addr + '/toggle', {method:'POST'});
+  await loadCopyConfig();
+}
+
+async function setAlloc(addr, val) {
+  await api('/api/copy/wallet/' + addr + '/alloc', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({alloc: parseFloat(val)}),
+  });
+}
+
+async function removeCopyWallet(addr) {
+  if (!confirm('Remove ' + trunc(addr, 16) + ' from copy list?')) return;
+  await api('/api/copy/wallet/' + addr, {method:'DELETE'});
+  await loadCopyConfig();
+}
+
+// ── Copy Trades Log ────────────────────────────────────────────────────────
+async function loadCopyTrades() {
+  try {
+    const trades = await api('/api/copy/trades?limit=50');
+    const body = $('copy-trades-body');
+    const ct = $('trade-log-count');
+    if (!Array.isArray(trades) || !trades.length) {
+      if (body) body.innerHTML = '<tr><td colspan="7" class="empty">No copy trades yet</td></tr>';
+      if (ct) ct.textContent = '(0)';
+      return;
+    }
+    if (ct) ct.textContent = '(' + trades.length + ')';
+
+    body.innerHTML = trades.reverse().map(t => {
+      const action = (t.action || '?').toUpperCase();
+      const statusCls = t.status === 'dry_run' ? 'sm' : t.status === 'FILLED' ? 'pos' : t.status === 'FAILED' ? 'neg' : 'sm';
+      return '<tr>' +
+        '<td class="sm">' + fmtTime(t.timestamp) + '</td>' +
+        '<td class="' + (action==='BUY'?'buy':'sell') + '">' + action + '</td>' +
+        '<td class="mono sm">' + trunc(t.source_wallet, 12) + '</td>' +
+        '<td class="mono sm">' + trunc(t.token_mint, 12) + '</td>' +
+        '<td class="sm">' + fmtAmt(t.amount_sol) + ' → ' + fmtAmt(t.scaled_amount_sol) + '</td>' +
+        '<td class="' + statusCls + '">' + (t.status || '?') + '</td>' +
+        '<td class="mono sm">' + (t.source_sig ? '<a href="https://solscan.io/tx/' + t.source_sig + '" target="_blank">' + trunc(t.source_sig, 12) + '</a>' : '—') + '</td>' +
+      '</tr>';
+    }).join('');
+  } catch (e) {
+    const body = $('copy-trades-body');
+    if (body) body.innerHTML = '<tr><td colspan="7" class="empty">Failed to load trades</td></tr>';
+  }
+}
+
+// ── Copy Stats ─────────────────────────────────────────────────────────────
+async function loadCopyStats() {
+  try {
+    const s = await api('/api/wallet/stats');
+    $('cs-pnl').textContent = Number(s.pnl_sol||0).toFixed(4);
+    $('cs-pnl').className = 'stat-value ' + (s.pnl_sol >= 0 ? 'pos' : 'neg');
+    $('cs-winrate').textContent = (s.win_rate||0).toFixed(1) + '%';
+    $('cs-trades').textContent = s.total_trades || 0;
+    $('cs-pf').textContent = (s.profit_factor||0).toFixed(2);
+  } catch (e) {
+    console.error('loadCopyStats failed:', e);
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// INIT
+// ══════════════════════════════════════════════════════════════════════════
+document.addEventListener('DOMContentLoaded', function() {
+  // Start uptime counter
+  setInterval(updateUptime, 1000);
+
+  // Restore tab
+  switchTab(currentTab);
+
+  // Auto-refresh every 30s
+  setInterval(function() {
+    if (currentTab === 'discovery') loadDiscovery();
+    if (currentTab === 'copy') loadCopyTab();
+  }, 30000);
+});
+</script>
 </body>
 </html>
