@@ -333,7 +333,7 @@ async def execute_swap_legacy(
         "outputMint": output_mint,
         "amount": amount_lamports,
         "slippageBps": slippage_bps,
-        "asLegacyTransaction": True,
+        "asLegacyTransaction": "true",
     }
     
     try:
