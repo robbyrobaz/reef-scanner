@@ -1,7 +1,7 @@
 /**
  * Copy Trading tab — wallet config, enabled copies, trade log
  */
-import { api, state } from './api.js';
+import { api, state } from './app.js';
 
 export const copyTrading = {
   config: null,
@@ -34,16 +34,13 @@ function renderWalletStatus() {
   if (!cfg || !cfg.user_wallet) {
     walletEl.innerHTML = `
       <div class="wallet-empty">
-        <p>No wallet connected. Generate a keypair or import your existing private key.</p>
+        <p>No wallet configured. Paste your seed phrase below to enable copy trading.</p>
+        <textarea id="seed-phrase-input" class="seed-input" rows="2" placeholder="word1 word2 word3 ... (space separated)"></textarea>
         <div class="form-row">
-          <button class="btn btn-primary" onclick="copyTrading.generateWallet()">🔑 Generate New Keypair</button>
+          <input type="password" id="wallet-alias" placeholder="Alias (e.g. 'main hot wallet')" style="flex:1;padding:6px 10px;border-radius:6px;border:1px solid #30363d;background:#0d1117;color:#e6edf3;font-size:13px;">
+          <button class="btn btn-primary" onclick="copyTrading.saveWallet()">💾 Save Wallet</button>
         </div>
-        <div style="margin: 10px 0; color: var(--muted); font-size: 12px;">— or —</div>
-        <textarea id="privkey-input" class="seed-input" rows="2" placeholder="Enter base58 private key (SOLD...)"></textarea>
-        <div class="form-row" style="margin-top:8px">
-          <button class="btn btn-secondary" onclick="copyTrading.importWallet()">📥 Import Private Key</button>
-        </div>
-        <div id="wallet-msg" class="msg" style="margin-top:8px"></div>
+        <div id="wallet-save-msg" class="msg"></div>
       </div>`;
   } else {
     walletEl.innerHTML = `
@@ -55,45 +52,29 @@ function renderWalletStatus() {
   }
 }
 
-// ── Generate keypair ──────────────────────────────────────────────────────────
-export async function generateWallet() {
-  const msg = document.getElementById('wallet-msg');
-  try {
-    const res = await api('/api/wallet/generate', { method: 'POST' });
-    if (!copyTrading.config) copyTrading.config = {};
-    copyTrading.config.user_wallet = res.address;
-    copyTrading.config.keypair_path = res.keypair_path || '';
-    renderWalletStatus();
-    if (msg) { msg.textContent = '✅ Keypair generated! Address: ' + res.address + ' — send SOL to this address to fund it.'; msg.className = 'msg ok'; }
-  } catch(e) {
-    if (msg) { msg.textContent = 'Failed: ' + e.message; msg.className = 'msg err'; }
-  }
-}
+// ── Seed phrase save ───────────────────────────────────────────────────────────
+export async function saveWallet() {
+  const phrase = document.getElementById('seed-phrase-input')?.value.trim();
+  const alias = document.getElementById('wallet-alias')?.value.trim();
+  const msg = document.getElementById('wallet-save-msg');
 
-// ── Import private key ─────────────────────────────────────────────────────────
-export async function importWallet() {
-  const privkey = document.getElementById('privkey-input')?.value.trim();
-  const msg = document.getElementById('wallet-msg');
-  if (!privkey) { msg.textContent = 'Please enter a private key'; msg.className = 'msg err'; return; }
+  if (!phrase) { msg.textContent = 'Please enter a seed phrase'; msg.className = 'msg err'; return; }
+
+  const words = phrase.split(/\s+/);
+  if (words.length < 24) { msg.textContent = 'Seed phrase must be 24-25 words'; msg.className = 'msg err'; return; }
+
   try {
-    const res = await api('/api/wallet/import', {
+    const res = await api('/api/wallet/verify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ privkey }),
+      body: JSON.stringify({ phrase }),
     });
-    if (!copyTrading.config) copyTrading.config = {};
-    copyTrading.config.user_wallet = res.address;
+    copyTrading.config = { ...copyTrading.config, user_wallet: res.address, user_alias: alias || '' };
     renderWalletStatus();
-    if (msg) { msg.textContent = '✅ Wallet imported! Address: ' + res.address; msg.className = 'msg ok'; }
+    if (msg) { msg.textContent = 'Wallet saved! Address: ' + res.address.slice(0,16) + '…'; msg.className = 'msg ok'; }
   } catch(e) {
     if (msg) { msg.textContent = 'Failed: ' + e.message; msg.className = 'msg err'; }
   }
-}
-
-// ── Seed phrase save (legacy — kept for backwards compat) ─────────────────────
-export async function saveWallet() {
-  // Deprecated — redirect to importWallet
-  await importWallet();
 }
 
 // ── Remove wallet ──────────────────────────────────────────────────────────────
@@ -168,21 +149,8 @@ async function renderEnabledCopies() {
 }
 
 export async function toggleWallet(addr) {
-  try {
-    const result = await api(`/api/copy/wallet/${addr}/toggle`, { method: 'POST' });
-    // Update local state and re-render immediately
-    const copies = result.copies || {};
-    for (const [a, info] of Object.entries(copies)) {
-      const existing = copyTrading.config?.copies?.[a] || {};
-      if (!copyTrading.config) copyTrading.config = {};
-      if (!copyTrading.config.copies) copyTrading.config.copies = {};
-      copyTrading.config.copies[a] = { ...existing, ...info };
-    }
-    renderEnabledCopies();
-  } catch(e) {
-    console.error('toggleWallet failed', e);
-    alert('Toggle failed: ' + e.message);
-  }
+  await api(`/api/copy/wallet/${addr}/toggle`, { method: 'POST' });
+  await loadConfig();
 }
 
 export async function setAlloc(addr, val) {

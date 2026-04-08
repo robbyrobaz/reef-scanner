@@ -3,8 +3,22 @@
  * All API calls and path references use BASE from import.meta.url
  */
 
-import { state, api } from './api.js';
-export { state, api };
+// ── State ────────────────────────────────────────────────────────────────────
+export const state = {
+  activeTab: localStorage.getItem('reef_tab') || 'discovery',
+  uptimeStart: Date.now(),
+  stats: null,
+};
+export async function api(path, opts = {}) {
+  const script = document.querySelector('script[type="module"][src]') || document.querySelector('script[type="module"]');
+  const src = script?.src || '';
+  const idx = src.indexOf('/static/');
+  const base = idx >= 0 ? src.slice(0, idx) : '';
+  const url = base + path;
+  const res = await fetch(url, opts);
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText} for ${url}`);
+  return res.json();
+}
 
 // ── Tab switching ─────────────────────────────────────────────────────────────
 export function switchTab(name) {
@@ -39,13 +53,8 @@ export function scheduleRefresh(fn, interval = 10000) {
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
-import { refresh as discoveryRefresh, loadTopWallets, renderTopWallets, renderRecentSwaps } from './discovery.js';
-import * as copyTradingModule from './copy-trading.js';
-
-// Mount on window so HTML onclick= handlers can reach them
-const copyTrading = copyTradingModule;
-window.copyTrading = copyTrading;
-window.discovery = { refresh: discoveryRefresh, loadTopWallets, renderTopWallets, renderRecentSwaps };
+import { refresh as discoveryRefresh } from './discovery.js';
+import * as copyTrading from './copy-trading.js';
 
 export async function init() {
   startUptime();
@@ -58,17 +67,8 @@ export async function init() {
     console.error('Failed to load stats', e);
   }
 
-  // Restore saved tab and load its data
+  // Restore saved tab
   switchTab(state.activeTab);
-  await loadTabData(state.activeTab);
-}
-
-async function loadTabData(tab) {
-  if (tab === 'discovery') {
-    await discoveryRefresh();
-  } else if (tab === 'copy-trading') {
-    await copyTrading.refresh();
-  }
 }
 
 function renderHeader(stats) {
