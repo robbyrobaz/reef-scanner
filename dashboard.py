@@ -167,7 +167,7 @@ async def get_positions():
 async def get_wallet_stats():
     cfg = load_copy_config()
     positions = load_positions()
-    trades = load_copy_trades(limit=500)
+    trades = load_copy_trades(limit=5000)  # All trades for accurate stats
 
     # Status breakdown: dry_run=paper, confirmed=live success, failed=attempted but errored
     paper = [t for t in trades if t.get("status") == "dry_run"]
