@@ -26,7 +26,7 @@ from config import (
     WALLET_DB_FILE,
     DATA_DIR,
 )
-from db import init_db, get_all_swaps_list, insert_swaps, save_wallets, get_db
+from db import init_db, get_all_swaps_list, insert_swaps, save_wallets, get_db, get_writer_db
 from models import WalletMetrics
 from swap_parser import (
     DEX_PROGRAMS,
@@ -357,18 +357,40 @@ def filter_and_rank(wallets: List[WalletMetrics]) -> List[WalletMetrics]:
 
 def purge_old_entries(max_age_days: int = 30):
     """Delete wallets inactive > max_age_days from DuckDB."""
-    con = get_db()
-    cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
-    con.execute(
-        "DELETE FROM wallets WHERE last_active != 'N/A' AND last_active < ?",
-        [cutoff]
-    )
-    print(f"\n🧹 Auto-purged stale wallets (> {max_age_days} days old)")
+    con = get_writer_db()
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
+        con.execute(
+            "DELETE FROM wallets WHERE last_active != 'N/A' AND last_active < ?",
+            [cutoff]
+        )
+        print(f"\n🧹 Auto-purged stale wallets (> {max_age_days} days old)")
+    finally:
+        con.close()
 
 
 def load_historical_swaps(filepath: str) -> List[ParsedSwap]:
-    """Load all swaps from DuckDB (filepath param kept for compat)."""
-    return get_all_swaps_list()
+    """Load historical swaps from DuckDB as ParsedSwap objects."""
+    rows = get_all_swaps_list()
+    swaps = []
+    for r in rows:
+        try:
+            swaps.append(ParsedSwap(
+                wallet=r.get('wallet', ''),
+                signature=r.get('signature', ''),
+                dex=r.get('dex', ''),
+                token_mint=r.get('token_mint', ''),
+                action=r.get('action', ''),
+                amount=float(r.get('amount', 0) or 0),
+                amount_sol=float(r.get('amount_sol', 0) or 0),
+                price_sol=float(r.get('price_sol', 0) or 0),
+                slot=int(r.get('slot', 0) or 0),
+                block_time=int(r.get('block_time', 0) or 0),
+                fee=int(r.get('fee', 0) or 0),
+            ))
+        except Exception:
+            continue
+    return swaps
 
 
 def save_wallets_to_db(wallets: List[WalletMetrics], filepath: str):
