@@ -131,6 +131,11 @@
         <span>Wallets: <strong id="total-wallets">—</strong></span>
         <span>Up: <strong id="uptime">0m 0s</strong></span>
       </div>
+      <div class="status-bar" style="margin-top:4px;">
+        <span>Hot Wallet: <strong id="hot-wallet" class="mono" style="cursor:pointer;color:var(--blue);" onclick="copyHotWallet()" title="Click to copy">—</strong>
+        <span id="copy-toast" style="color:var(--green);font-size:11px;display:none;">✓ copied</span></span>
+        <span>Balance: <strong id="hot-balance">—</strong> SOL</span>
+      </div>
     </div>
   </header>
 
@@ -706,9 +711,44 @@ async function loadCopyStats() {
 // ══════════════════════════════════════════════════════════════════════════
 // INIT
 // ══════════════════════════════════════════════════════════════════════════
+// ── Hot Wallet ─────────────────────────────────────────────────────────
+function copyHotWallet() {
+  const addr = $('hot-wallet')?.textContent;
+  if (!addr || addr === '—') return;
+  navigator.clipboard.writeText(addr).then(function() {
+    const toast = $('copy-toast');
+    if (toast) { toast.style.display = 'inline'; setTimeout(function() { toast.style.display = 'none'; }, 2000); }
+  });
+}
+
+async function loadHotWallet() {
+  try {
+    const cfg = await api('/api/copy/config');
+    const addr = cfg.user_wallet || '';
+    if (addr) {
+      $('hot-wallet').textContent = addr;
+      // Fetch balance from Helius
+      loadBalance(addr);
+    }
+  } catch(e) {}
+}
+
+async function loadBalance(addr) {
+  try {
+    const res = await api('/api/wallet/balance');
+    const bal = res.balance_sol;
+    $('hot-balance').textContent = bal != null ? Number(bal).toFixed(4) : '—';
+  } catch(e) {
+    $('hot-balance').textContent = '—';
+  }
+}
+
 document.addEventListener('DOMContentLoaded', function() {
   // Start uptime counter
   setInterval(updateUptime, 1000);
+
+  // Load hot wallet address + balance
+  loadHotWallet();
 
   // Restore tab
   switchTab(currentTab);
@@ -717,6 +757,7 @@ document.addEventListener('DOMContentLoaded', function() {
   setInterval(function() {
     if (currentTab === 'discovery') loadDiscovery();
     if (currentTab === 'copy') loadCopyTab();
+    loadHotWallet();
   }, 30000);
 });
 </script>
