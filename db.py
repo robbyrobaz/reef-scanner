@@ -6,17 +6,12 @@ import pandas as pd
 DB_PATH = Path(__file__).parent / "data" / "reef.db"
 DATA_DIR = Path(__file__).parent / "data"
 
-_conn = None
-
 def get_db(read_only: bool = True) -> duckdb.DuckDBPyConnection:
-    """Get or create the DuckDB connection (singleton).
-    Dashboard callers should pass read_only=True (default).
-    Scanner callers doing writes must pass read_only=False.
+    """Open a fresh read-only DuckDB connection.
+    No singleton — open/close per call to avoid holding locks.
+    Dashboard uses this for reads; scanner uses get_writer_db() for writes.
     """
-    global _conn
-    if _conn is None:
-        _conn = duckdb.connect(str(DB_PATH), read_only=read_only)
-    return _conn
+    return duckdb.connect(str(DB_PATH), read_only=read_only)
 
 def query_db(sql: str, params: list = None) -> list:
     """Execute a read-only query and return results as dicts. Opens/closes a connection each call — safe for concurrent use."""
@@ -38,48 +33,51 @@ def get_writer_db() -> duckdb.DuckDBPyConnection:
     return duckdb.connect(str(DB_PATH), read_only=False)
 
 def init_db():
-    """Create tables and indexes if they don't exist."""
+    """Create tables and indexes if they don't exist. Opens+closes writer connection."""
     con = get_writer_db()
-    con.execute("""
-        CREATE TABLE IF NOT EXISTS swaps (
-            signature   TEXT PRIMARY KEY,
-            wallet      TEXT,
-            dex         TEXT,
-            token_mint  TEXT,
-            action      TEXT,
-            amount      DOUBLE,
-            amount_sol   DOUBLE,
-            price_sol   DOUBLE,
-            slot        BIGINT,
-            block_time  BIGINT,
-            fee         BIGINT,
-            solscan_sig TEXT DEFAULT ''
-        )
-    """)
-    # Add missing columns to existing table
     try:
-        con.execute("ALTER TABLE swaps ADD COLUMN solscan_sig TEXT DEFAULT ''")
-    except Exception:
-        pass  # column already exists
-    con.execute("""
-        CREATE TABLE IF NOT EXISTS wallets (
-            address          TEXT PRIMARY KEY,
-            score            DOUBLE,
-            total_trades     INTEGER,
-            win_rate         DOUBLE,
-            profit_factor    DOUBLE,
-            avg_roi          DOUBLE,
-            best_roi         DOUBLE,
-            worst_roi        DOUBLE,
-            avg_hold_minutes INTEGER,
-            last_active      TEXT,
-            favorite_token  TEXT,
-            solscan_link     TEXT
-        )
-    """)
-    con.execute("CREATE INDEX IF NOT EXISTS idx_swaps_block_time ON swaps(block_time)")
-    con.execute("CREATE INDEX IF NOT EXISTS idx_wallets_score ON wallets(score)")
-    con.execute("CREATE INDEX IF NOT EXISTS idx_wallets_pf ON wallets(profit_factor)")
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS swaps (
+                signature   TEXT PRIMARY KEY,
+                wallet      TEXT,
+                dex         TEXT,
+                token_mint  TEXT,
+                action      TEXT,
+                amount      DOUBLE,
+                amount_sol   DOUBLE,
+                price_sol   DOUBLE,
+                slot        BIGINT,
+                block_time  BIGINT,
+                fee         BIGINT,
+                solscan_sig TEXT DEFAULT ''
+            )
+        """)
+        # Add missing columns to existing table
+        try:
+            con.execute("ALTER TABLE swaps ADD COLUMN solscan_sig TEXT DEFAULT ''")
+        except Exception:
+            pass  # column already exists
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS wallets (
+                address          TEXT PRIMARY KEY,
+                score            DOUBLE,
+                total_trades     INTEGER,
+                win_rate         DOUBLE,
+                profit_factor    DOUBLE,
+                avg_roi          DOUBLE,
+                best_roi         DOUBLE,
+                worst_roi        DOUBLE,
+                avg_hold_minutes INTEGER,
+                last_active      TEXT,
+                favorite_token  TEXT,
+                solscan_link     TEXT
+            )
+        """)
+        con.execute("CREATE INDEX IF NOT EXISTS idx_swaps_block_time ON swaps(block_time)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_wallets_score ON wallets(score)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_wallets_pf ON wallets(profit_factor)")
+    finally:
+        con.close()  # Release the write lock so scanner + dashboard don't conflict
 
 # ── Swaps ─────────────────────────────────────────────────────────────────────
 
@@ -113,8 +111,10 @@ def get_swaps_df(limit: int = 1000) -> pd.DataFrame:
 def get_all_swaps_list(limit: int = 1000) -> list:
     """Get recent swaps as list of dicts. Capped for performance."""
     cap = min(limit, 5000)
-    rows = get_db().execute(f"SELECT * FROM swaps ORDER BY block_time DESC LIMIT {cap}").fetchall()
-    cols = [d[0] for d in get_db().description]
+    con = get_db()
+    rows = con.execute(f"SELECT * FROM swaps ORDER BY block_time DESC LIMIT {cap}").fetchall()
+    cols = [d[0] for d in con.description]
+    con.close()
     return [dict(zip(cols, r)) for r in rows]
 
 def get_recent_swaps(limit: int = 50) -> pd.DataFrame:

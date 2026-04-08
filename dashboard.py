@@ -21,8 +21,8 @@ DATA_DIR = BASE_DIR / "data"
 SCANNER_DIR = BASE_DIR.parent  # /home/rob/reef-scanner
 
 # ── DuckDB ─────────────────────────────────────────────────────────────────────
-from db import init_db
-init_db()
+# Dashboard is READ-ONLY — do NOT call init_db() here, it grabs a write lock.
+# Tables are created by the scanner on first run.
 
 
 # ── Config ──────────────────────────────────────────────────────────────────────
