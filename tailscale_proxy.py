@@ -45,9 +45,11 @@ async def handle(client_reader, client_writer):
         if path.startswith(REEF_PREFIX):
             target_path = path[len(REEF_PREFIX):] or b"/"
             target_port = REEF_PORT
+            extra_headers = [b"X-Base-Path: /reef\r\n"]
         else:
             target_path = path
             target_port = GATEWAY_PORT
+            extra_headers = []
 
         # Connect to target
         try:
@@ -61,6 +63,9 @@ async def handle(client_reader, client_writer):
         new_req += b"".join(headers_list)
         if not any(h.lower().startswith(b"host:") for h in headers_list):
             new_req += b"Host: 127.0.0.1:" + str(target_port).encode() + b"\r\n"
+        # Pass base path header so dashboard knows its /reef prefix
+        for h in extra_headers:
+            new_req += h
         new_req += b"\r\n"
         if body:
             new_req += body

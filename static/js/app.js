@@ -78,7 +78,7 @@ function renderHeader(stats) {
   document.getElementById('total-swaps').textContent = fmt(stats.total_swaps);
   document.getElementById('total-wallets').textContent = fmt(stats.total_wallets);
   document.getElementById('last-scan').textContent = stats.last_scan
-    ? new Date(stats.last_scan).toLocaleTimeString()
+    ? new Date(Number(stats.last_scan) * 1000).toLocaleString()
     : '—';
 
   // DEX breakdown

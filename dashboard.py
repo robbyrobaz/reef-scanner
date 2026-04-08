@@ -151,9 +151,11 @@ async def dashboard(request: Request):
     config = load_copy_config()
     copy_trades = load_copy_trades(limit=30)
 
-    # Extract base from the URL path (e.g. "/reef" from "/reef/")
-    path_parts = request.url.path.rstrip("/").split("/")
-    base = "/" + path_parts[1] if len(path_parts) > 1 and path_parts[1] else ""
+    # Extract base from X-Base-Path header (set by tailscale proxy), or from URL path
+    base = request.headers.get("X-Base-Path", "")
+    if not base:
+        path_parts = request.url.path.rstrip("/").split("/")
+        base = "/" + path_parts[1] if len(path_parts) > 1 and path_parts[1] else ""
 
     tmpl = jinja_env.get_template("dashboard.html")
     html = tmpl.render(base=base)

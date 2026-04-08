@@ -92,7 +92,7 @@ export async function loadSwaps() {
         <td class="${s.action==='BUY'?'buy':'sell'}">${s.action}</td>
         <td class="mono sm">${truncate(s.token_mint || s.token, 10)}</td>
         <td>${fmtAmt(s.amount)}</td>
-        <td>${Number(s.amount_sol || s.sol_amount).toFixed(4)} SOL</td>
+        <td>${(Number(s.amount_sol) / 1e9).toFixed(4)} SOL</td>
         <td class="sm">${s.dex || '?'}</td>
         <td class="mono sm"><a href="${s.solscan_sig || '#'}" target="_blank">${truncate(s.signature || s.sig, 12)}</a></td>
       </tr>`;
