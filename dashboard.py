@@ -169,20 +169,22 @@ async def get_wallet_stats():
     positions = load_positions()
     trades = load_copy_trades(limit=5000)  # All trades for accurate stats
 
-    # Status breakdown: dry_run=paper, confirmed=live success, failed=attempted but errored
+    # Status breakdown
     paper = [t for t in trades if t.get("status") == "dry_run"]
     live = [t for t in trades if t.get("status") == "confirmed"]
     failed = [t for t in trades if t.get("status") == "failed"]
 
-    wins = sum(1 for t in trades if _is_profitable(t))
-    total = len(trades)
-    win_rate = (wins / total * 100) if total > 0 else 0
-    profit = sum(_trade_pnl(t) for t in trades)
-    buys = sum(1 for t in trades if t.get("action", "").upper() == "BUY")
-    sells = sum(1 for t in trades if t.get("action", "").upper() == "SELL")
+    # Stats only from EXECUTED trades (paper + live), NOT failed
+    executed = paper + live
+    wins = sum(1 for t in executed if _is_profitable(t))
+    total_exec = len(executed)
+    win_rate = (wins / total_exec * 100) if total_exec > 0 else 0
+    profit = sum(_trade_pnl(t) for t in executed)
+    buys = sum(1 for t in executed if t.get("action", "").upper() == "BUY")
+    sells = sum(1 for t in executed if t.get("action", "").upper() == "SELL")
 
-    gains = [t for t in trades if _is_profitable(t)]
-    losses = [t for t in trades if not _is_profitable(t) and _trade_pnl(t) != 0]
+    gains = [t for t in executed if _is_profitable(t)]
+    losses = [t for t in executed if not _is_profitable(t) and _trade_pnl(t) != 0]
     avg_win = (sum(_trade_pnl(t) for t in gains) / len(gains)) if gains else 0
     avg_loss = (sum(_trade_pnl(t) for t in losses) / len(losses)) if losses else 0
     loss_sum = sum(_trade_pnl(t) for t in losses)
@@ -192,7 +194,7 @@ async def get_wallet_stats():
         "pnl_sol": profit,
         "win_rate": win_rate,
         "profit_factor": abs(gain_sum / loss_sum) if loss_sum != 0 else 0,
-        "total_trades": total,
+        "total_trades": total_exec,
         "paper_trades": len(paper),
         "live_trades": len(live),
         "failed_trades": len(failed),
