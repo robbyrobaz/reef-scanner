@@ -252,6 +252,35 @@ async def set_copy_alloc(addr: str, request: Request):
     _save_config(cfg)
     return {"ok": True}
 
+# ── API: Remove wallet from copy list ─────────────────────────────────────────
+@app.delete("/api/copy/wallet/{addr}")
+async def remove_copy_wallet(addr: str):
+    cfg = load_copy_config()
+    copies = cfg.get("copies", {})
+    if addr in copies:
+        del copies[addr]
+        cfg["copies"] = copies
+        _save_config(cfg)
+    return {"ok": True}
+
+# ── API: Add wallet to copy list ───────────────────────────────────────────────
+@app.post("/api/copy/wallet")
+async def add_copy_wallet(request: Request):
+    body = await request.json()
+    addr = (body.get("address") or "").strip()
+    alloc = float(body.get("alloc_sol") or 0.01)
+    if not addr:
+        raise HTTPException(status_code=400, detail="No address provided")
+    # Basic Solana address validation (base58, 32-44 chars)
+    if len(addr) < 32 or len(addr) > 44:
+        raise HTTPException(status_code=400, detail="Invalid Solana address")
+    cfg = load_copy_config()
+    copies = cfg.get("copies", {})
+    copies[addr] = {"enabled": True, "alloc_sol": alloc, "last_sig": "", "last_copy_ts": 0}
+    cfg["copies"] = copies
+    _save_config(cfg)
+    return {"ok": True, "copies": copies}
+
 # ── API: Global toggle ────────────────────────────────────────────────────────
 @app.post("/api/copy/global-toggle")
 async def global_toggle():

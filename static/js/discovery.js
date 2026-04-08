@@ -29,7 +29,10 @@ export async function loadTopWallet() {
         <div class="metric">ROI: <span style="color:${Number(top.avg_roi)>0?'var(--green)':'var(--red)'}">${fmtROI(top.avg_roi)}%</span></div>
         <div class="metric">Token: <span>${top.favorite_token || '—'}</span></div>
       </div>
-      <a class="solscan-link" href="${top.solscan_link}" target="_blank">View on Solscan →</a>
+      <div style="margin-top:8px;display:flex;gap:8px;align-items:center;">
+        <a class="solscan-link" href="${top.solscan_link}" target="_blank">View on Solscan →</a>
+        <button class="btn btn-primary btn-small" onclick="discovery.addToCopy('${top.address}')" id="banner-copy-btn">📋 Copy Trade</button>
+      </div>
     `;
   } catch(e) {
     console.error('loadTopWallet failed', e);
@@ -45,7 +48,7 @@ export async function loadTopWallets() {
     if (!body) return;
 
     if (!wallets.length) {
-      body.innerHTML = `<tr><td colspan="8" class="empty">No wallets yet</td></tr>`;
+      body.innerHTML = `<tr><td colspan="9" class="empty">No wallets yet</td></tr>`;
       return;
     }
 
@@ -65,11 +68,27 @@ export async function loadTopWallets() {
         <td class="${Number(w.avg_roi)>=0?'pos':'neg'}">${roi}%</td>
         <td class="sm">${w.favorite_token || '—'}</td>
         <td class="sm">${w.last_active ? timeAgo(new Date(w.last_active).getTime()) : '—'}</td>
+        <td><button class="btn btn-primary btn-small" onclick="discovery.addToCopy('${w.address}')">📋 Copy</button></td>
       </tr>`;
     }).join('');
   } catch(e) {
     document.getElementById('top-wallets-body').innerHTML =
-      `<tr><td colspan="8" class="empty">Failed to load wallets</td></tr>`;
+      `<tr><td colspan="9" class="empty">Failed to load wallets</td></tr>`;
+  }
+}
+
+export async function addToCopy(addr) {
+  try {
+    await api('/api/copy/wallet', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ address: addr, alloc_sol: 0.01 }),
+    });
+    // Visual feedback: briefly highlight the button
+    const btns = document.querySelectorAll(`[onclick="discovery.addToCopy('${addr}')"]`);
+    btns.forEach(b => { b.textContent = '✓ Added'; b.disabled = true; b.className = 'btn btn-ghost btn-small'; });
+  } catch(e) {
+    alert('Failed to add wallet: ' + e.message);
   }
 }
 

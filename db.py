@@ -12,16 +12,38 @@ DB_PATH = DATA_DIR / "reef.db"
 
 _conn = None
 
-def get_db() -> duckdb.DuckDBPyConnection:
-    """Get or create the DuckDB connection (singleton)."""
+def get_db(read_only: bool = True) -> duckdb.DuckDBPyConnection:
+    """Get or create the DuckDB connection (singleton).
+    Dashboard callers should pass read_only=True (default).
+    Scanner callers doing writes must pass read_only=False.
+    """
     global _conn
     if _conn is None:
-        _conn = duckdb.connect(str(DB_PATH))
+        _conn = duckdb.connect(str(DB_PATH), read_only=read_only)
     return _conn
+
+def query_db(sql: str, params: list = None) -> list:
+    """Execute a read-only query and return results as dicts. Opens/closes a connection each call — safe for concurrent use."""
+    con = duckdb.connect(str(DB_PATH), read_only=True)
+    try:
+        if params:
+            result = con.execute(sql, params).fetchall()
+        else:
+            result = con.execute(sql).fetchall()
+        cols = [d[0] for d in con.description] if con.description else []
+        con.close()
+        return [dict(zip(cols, row)) for row in result]
+    except Exception:
+        con.close()
+        raise
+
+def get_writer_db() -> duckdb.DuckDBPyConnection:
+    """Get a fresh write-capable connection (bypasses singleton). Use for scanner writes only."""
+    return duckdb.connect(str(DB_PATH), read_only=False)
 
 def init_db():
     """Create tables and indexes if they don't exist."""
-    con = get_db()
+    con = get_writer_db()
     con.execute("""
         CREATE TABLE IF NOT EXISTS swaps (
             signature   TEXT PRIMARY KEY,
@@ -65,7 +87,7 @@ def insert_swaps(swaps: list):
     """Batch-insert a list of ParsedSwap objects. Upserts by signature."""
     if not swaps:
         return
-    con = get_db()
+    con = get_writer_db()
     rows = [{
         "signature":  s.signature,
         "wallet":     s.wallet,
@@ -143,7 +165,7 @@ def save_wallets(wallets: list):
             "solscan_link":     f"https://solscan.io/account/{w.address}",
         })
     df = pd.DataFrame(rows)
-    con = get_db()
+    con = get_writer_db()
     con.execute("DELETE FROM wallets")
     con.execute("INSERT INTO wallets SELECT * FROM df")
 
@@ -208,7 +230,7 @@ def migrate_from_legacy():
     """One-time: import existing legacy CSV data into DuckDB."""
     swaps_csv   = DATA_DIR / "swaps.csv"
     wallets_csv = DATA_DIR / "wallets.csv"
-    con = get_db()
+    con = get_writer_db()
 
     if swaps_csv.exists():
         n = con.execute(f"SELECT COUNT(*) FROM swaps").fetchone()[0]

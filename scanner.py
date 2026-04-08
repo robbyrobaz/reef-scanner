@@ -26,7 +26,7 @@ from config import (
     WALLET_DB_FILE,
     DATA_DIR,
 )
-from db import init_db, get_all_swaps_list, insert_swaps, save_wallets
+from db import init_db, get_all_swaps_list, insert_swaps, save_wallets, get_db
 from models import WalletMetrics
 from swap_parser import (
     DEX_PROGRAMS,
@@ -358,9 +358,10 @@ def filter_and_rank(wallets: List[WalletMetrics]) -> List[WalletMetrics]:
 def purge_old_entries(max_age_days: int = 30):
     """Delete wallets inactive > max_age_days from DuckDB."""
     con = get_db()
+    cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
     con.execute(
-        "DELETE FROM wallets WHERE last_active != 'N/A' AND CAST(last_active AS TIMESTAMP) < CAST(? AS TIMESTAMP)",
-        [datetime.now(timezone.utc) - timedelta(days=max_age_days)]
+        "DELETE FROM wallets WHERE last_active != 'N/A' AND last_active < ?",
+        [cutoff]
     )
     print(f"\n🧹 Auto-purged stale wallets (> {max_age_days} days old)")
 

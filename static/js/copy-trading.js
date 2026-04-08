@@ -20,6 +20,7 @@ export async function loadConfig() {
     renderWalletStatus();
     renderGlobalToggle();
     renderEnabledCopies();
+    renderAddWalletUI();
   } catch(e) {
     console.error('loadConfig failed', e);
   }
@@ -123,7 +124,7 @@ async function renderEnabledCopies() {
 
     const body = document.getElementById('copy-wallets-body');
     if (!copies.length) {
-      body.innerHTML = `<tr><td colspan="5" class="empty">No copy trades enabled. Add wallets from the Discovery tab.</td></tr>`;
+      body.innerHTML = `<tr><td colspan="5" class="empty">No copy trades enabled. Add a wallet below or from the Discovery tab.</td></tr>`;
       return;
     }
 
@@ -148,6 +149,43 @@ async function renderEnabledCopies() {
   }
 }
 
+// ── Add Wallet UI ──────────────────────────────────────────────────────────────
+function renderAddWalletUI() {
+  const wrap = document.getElementById('add-wallet-row');
+  if (!wrap) return;
+  wrap.innerHTML = `
+    <td colspan="5" style="padding:8px 0;">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <input type="text" id="add-wallet-addr" placeholder="Solana wallet address (e.g. 7xKX...)"
+          style="flex:1;min-width:200px;padding:6px 10px;border-radius:6px;border:1px solid #30363d;background:#0d1117;color:#e6edf3;font-size:13px;font-family:monospace;">
+        <input type="number" id="add-wallet-alloc" value="0.01" step="0.001" min="0.001"
+          style="width:90px;padding:6px 8px;border-radius:6px;border:1px solid #30363d;background:#0d1117;color:#e6edf3;font-size:13px;">
+        <span style="color:var(--muted);font-size:12px;">SOL alloc</span>
+        <button class="btn btn-primary btn-small" onclick="copyTrading.addWallet()">+ Add Wallet</button>
+        <span id="add-wallet-msg" class="msg" style="margin-left:8px;"></span>
+      </div>
+    </td>`;
+}
+
+export async function addWallet() {
+  const addr = document.getElementById('add-wallet-addr')?.value.trim();
+  const alloc = parseFloat(document.getElementById('add-wallet-alloc')?.value || '0.01');
+  const msg = document.getElementById('add-wallet-msg');
+  if (!addr) { if (msg) { msg.textContent = 'Enter a wallet address'; msg.className='msg err'; } return; }
+  if (addr.length < 32 || addr.length > 44) { if (msg) { msg.textContent = 'Invalid Solana address'; msg.className='msg err'; } return; }
+  try {
+    await api('/api/copy/wallet', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ address: addr, alloc_sol: alloc }),
+    });
+    if (msg) { msg.textContent = 'Wallet added!'; msg.className='msg ok'; }
+    await loadConfig();
+  } catch(e) {
+    if (msg) { msg.textContent = 'Error: ' + e.message; msg.className='msg err'; }
+  }
+}
+
 export async function toggleWallet(addr) {
   await api(`/api/copy/wallet/${addr}/toggle`, { method: 'POST' });
   await loadConfig();
@@ -162,8 +200,8 @@ export async function setAlloc(addr, val) {
 }
 
 export async function removeCopy(addr) {
-  if (!confirm(`Stop copying ${truncate(addr, 12)}?`)) return;
-  await api(`/api/copy/wallet/${addr}/toggle`, { method: 'POST' });
+  if (!confirm(`Remove ${truncate(addr, 12)} from copy list?`)) return;
+  await api(`/api/copy/wallet/${addr}`, { method: 'DELETE' });
   await loadConfig();
 }
 
