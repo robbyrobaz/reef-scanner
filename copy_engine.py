@@ -39,6 +39,7 @@ import websockets
 
 from swap_executor import execute_swap_legacy, load_solana_keypair, DRY_RUN as EXECUTOR_DRY_RUN, SwapResult
 from pumpfun_executor import execute_pumpfun_swap
+from pumpswap_executor import execute_pumpswap
 from positions import (
     load_positions, save_positions, add_position_from_trade, reduce_position,
     get_positions_summary, refresh_positions,
@@ -129,6 +130,7 @@ class CopyTrade:
     status: str = "pending"   # pending, confirmed, failed, dry_run
     error: str = ""
     realized_pnl_sol: float = 0.0  # computed when a SELL closes a paper position
+    pool_address: str = ""    # pump-amm pool (extracted from source tx, avoids getProgramAccounts)
 
 
 def load_copy_trades() -> List[CopyTrade]:
@@ -255,7 +257,7 @@ async def execute_copy_trade(trade: CopyTrade) -> bool:
     SOL_MINT = "So11111111111111111111111111111111111111112"
 
     try:
-        # Try PumpPortal first (bonding curve tokens)
+        # Step 1: Try PumpPortal (bonding-curve tokens)
         result = await execute_pumpfun_swap(
             KEYPAIR_LOADED,
             trade.action.lower(),
@@ -265,20 +267,33 @@ async def execute_copy_trade(trade: CopyTrade) -> bool:
             priority_fee=0.005,
             pool="auto",
         )
-        
-        # If PumpPortal fails (e.g. token graduated off bonding curve), fall back to Jupiter
+
+        # Step 2: PumpPortal failed → try pump-amm (graduated tokens on pump.fun AMM)
         if not result.success:
-            print(f"    ⚠️  PumpPortal failed ({result.error[:80]}), trying Jupiter...")
-            if trade.action == "BUY":
-                result = await execute_swap_legacy(
-                    KEYPAIR_LOADED, SOL_MINT, trade.token_mint,
-                    trade.scaled_amount_sol, slippage_bps=200,
-                )
+            print(f"    ⚠️  PumpPortal failed ({result.error[:60]}), trying PumpSwap AMM...")
+            ps_result = await execute_pumpswap(
+                KEYPAIR_LOADED,
+                trade.action.lower(),
+                trade.token_mint,
+                trade.scaled_amount_sol,
+                slippage=15,
+                pool_address=trade.pool_address,
+            )
+            if ps_result.success:
+                result = SwapResult(success=True, signature=ps_result.signature, dex="pumpswap")
             else:
-                result = await execute_swap_legacy(
-                    KEYPAIR_LOADED, trade.token_mint, SOL_MINT,
-                    trade.scaled_amount_sol, slippage_bps=200,
-                )
+                # Step 3: PumpSwap failed → try Jupiter (Raydium / other DEX)
+                print(f"    ⚠️  PumpSwap failed ({ps_result.error[:60]}), trying Jupiter...")
+                if trade.action == "BUY":
+                    result = await execute_swap_legacy(
+                        KEYPAIR_LOADED, SOL_MINT, trade.token_mint,
+                        trade.scaled_amount_sol, slippage_bps=500,
+                    )
+                else:
+                    result = await execute_swap_legacy(
+                        KEYPAIR_LOADED, trade.token_mint, SOL_MINT,
+                        trade.scaled_amount_sol, slippage_bps=500,
+                    )
         
         if result.success:
             trade.our_sig = result.signature
@@ -362,6 +377,7 @@ async def check_wallet_for_new_trades(
                 amount_sol=swap.amount_sol,
                 scaled_amount_sol=scaled_sol,
                 source_price_sol=swap.price_sol,
+                pool_address=swap.pool_address,
             )
 
             # Pure copy: ALWAYS follow source wallet. If they buy, we buy. If they sell, we sell.
@@ -578,9 +594,10 @@ async def run_engine():
     DRY_RUN = not cli_live and trade_mode != "live"
     
     # Sync DRY_RUN flag to all executors
-    import swap_executor, pumpfun_executor
+    import swap_executor, pumpfun_executor, pumpswap_executor
     swap_executor.DRY_RUN = DRY_RUN
     pumpfun_executor.DRY_RUN = DRY_RUN
+    pumpswap_executor.DRY_RUN = DRY_RUN
     
     print(f"   Mode: {'🐸 DRY RUN (PAPER)' if DRY_RUN else '🔴 LIVE — REAL TRADES'}")
     if cli_live:

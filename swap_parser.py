@@ -40,7 +40,8 @@ class ParsedSwap:
     price_sol: float
     slot: int
     block_time: int
-    fee: int = 0  # default for historical loads
+    fee: int = 0            # default for historical loads
+    pool_address: str = ""  # pump-amm pool address (only for dex="pumpfun")
 
 
 def base58_decode(s: str) -> bytes:
@@ -85,63 +86,99 @@ def parse_pumpfun_swap(
     logs: List[str]
 ) -> Optional[dict]:
     """
-    Parse a Pump.fun swap from instruction and logs.
-    Uses logs to determine BUY vs SELL, accounts for token mint.
+    Parse a pump-amm swap from instruction and logs.
+
+    For pump-amm, instruction accounts layout:
+      [0] pool (amm)
+      [1] payer (wallet)
+      [2] GLOBAL_CONFIG
+      [3] base_mint  (may be WSOL for inverted pools)
+      [4] quote_mint (may be the token for inverted pools)
+      ...
+
+    We pick whichever of [3],[4] is NOT WSOL as the token mint.
+    Amounts come from pre/post token balance changes.
     """
     try:
-        # Check log for instruction type
+        # Determine action from logs
         action = None
         for log in logs:
-            if "Instruction: Buy" in log or "buy" in log.lower():
+            if "Instruction: Buy" in log:
                 action = "BUY"
                 break
-            elif "Instruction: Sell" in log or "sell" in log.lower():
+            elif "Instruction: Sell" in log:
                 action = "SELL"
                 break
-
         if not action:
             return None
 
-        # Get token mint from accounts
-        # Pump.fun accounts: [bonding_curve, mint, user, ...]
-        account_keys = [acc.get("pubkey", "") for acc in accounts]
+        # Extract token mint from instruction accounts [3] and [4]
+        ix_accounts = instruction.get("accounts", [])
         token_mint = ""
-        if len(account_keys) > 1:
-            token_mint = account_keys[1]
+        if len(ix_accounts) >= 5:
+            candidate_a = ix_accounts[3]  # base_mint
+            candidate_b = ix_accounts[4]  # quote_mint
+            # Pick whichever is not WSOL
+            if candidate_a != WRAPPED_SOL:
+                token_mint = candidate_a
+            elif candidate_b != WRAPPED_SOL:
+                token_mint = candidate_b
 
-        # Try to decode amounts from instruction data
-        data_str = instruction.get("data", "")
-        decoded = decode_instruction_data(data_str)
+        # Fall back to accountKeys[1] if ix_accounts unavailable (old format)
+        if not token_mint:
+            account_keys = [acc.get("pubkey", "") if isinstance(acc, dict) else acc for acc in accounts]
+            if len(account_keys) > 1:
+                token_mint = account_keys[1]
 
+        if not token_mint:
+            return None
+
+        # Compute SOL and token amounts from pre/post token balances
         sol_amount = 0.0
         token_amount = 0.0
+        pre_balances = {b["accountIndex"]: b for b in meta.get("preTokenBalances", [])}
+        post_balances = {b["accountIndex"]: b for b in meta.get("postTokenBalances", [])}
 
-        if decoded and len(decoded) >= 9:
-            # Try to extract u64 values
-            if len(decoded) >= 18:
-                # Two u64 values
-                val1 = struct.unpack("<Q", decoded[1:9])[0] if len(decoded) > 8 else 0
-                val2 = struct.unpack("<Q", decoded[10:18])[0] if len(decoded) > 17 else 0
+        # Find the wallet's index in accountKeys
+        account_keys_list = [
+            acc.get("pubkey", "") if isinstance(acc, dict) else acc
+            for acc in accounts
+        ]
+        wallet_idx = None
+        for i, k in enumerate(account_keys_list):
+            if k == wallet:
+                wallet_idx = i
+                break
 
-                # Determine which is SOL and which is token
-                # SOL amounts are typically larger (in lamports)
-                if val2 > 1e15:  # Likely a SOL amount in lamports
-                    sol_amount = val2 / 1e9
-                    token_amount = val1 / 1e6
-                else:
+        # Token amount: change in wallet's balance of token_mint
+        for idx, post in post_balances.items():
+            if post.get("mint") == token_mint:
+                pre = pre_balances.get(idx, {})
+                pre_amt = int(pre.get("uiTokenAmount", {}).get("amount", 0) or 0)
+                post_amt = int(post.get("uiTokenAmount", {}).get("amount", 0) or 0)
+                delta = abs(post_amt - pre_amt)
+                decimals = int(post.get("uiTokenAmount", {}).get("decimals", 6) or 6)
+                if delta > token_amount * (10 ** decimals):
+                    token_amount = delta / (10 ** decimals)
+
+        # SOL amount: extract from instruction data (first u64 after 8-byte discriminator = base/sol amount)
+        data_str = instruction.get("data", "")
+        decoded = decode_instruction_data(data_str)
+        if decoded and len(decoded) >= 24:
+            # buy:  [8-byte discrim][u64 base_amount_out][u64 max_quote_amount_in]
+            # sell: [8-byte discrim][u64 base_amount_in][u64 min_quote_amount_out]
+            # For buy:  max_quote_amount_in is roughly the SOL to spend
+            # For sell: min_quote_amount_out is roughly the SOL to receive
+            try:
+                val1 = struct.unpack("<Q", decoded[8:16])[0]   # token amount (raw)
+                val2 = struct.unpack("<Q", decoded[16:24])[0]  # SOL amount (lamports, with slippage)
+                sol_amount = val2 / 1e9
+                if sol_amount > 100:  # sanity: >100 SOL is a slippage sentinel, use val1 instead
                     sol_amount = val1 / 1e9
-                    token_amount = val2 / 1e6
-            elif len(decoded) >= 9:
-                val = struct.unpack("<Q", decoded[1:9])[0]
-                if val > 1e15:
-                    sol_amount = val / 1e9
-                else:
-                    token_amount = val / 1e6
+            except Exception:
+                pass
 
-        # Calculate price
-        price_sol = 0
-        if token_amount > 0 and sol_amount > 0:
-            price_sol = sol_amount / token_amount
+        price_sol = (sol_amount / token_amount) if token_amount > 0 and sol_amount > 0 else 0
 
         return {
             "token_mint": token_mint,
@@ -151,7 +188,7 @@ def parse_pumpfun_swap(
             "price_sol": price_sol,
         }
 
-    except Exception as e:
+    except Exception:
         return None
 
 
@@ -251,11 +288,16 @@ def parse_transaction_for_swaps(tx: dict) -> List[ParsedSwap]:
                 ))
                 return swaps
 
-        # Try pump.fun parsing
+        # Try pump.fun / pump-amm parsing
         if "pumpfun" in dex_programs_found:
             ix = dex_programs_found["pumpfun"]
             parsed = parse_pumpfun_swap(wallet, signature, ix, accounts, meta, logs)
             if parsed:
+                # Extract pool address: first account in the instruction's accounts list
+                # For pump-amm, keys[0] = pool; for bonding-curve, keys[0] = bonding_curve
+                ix_accounts = ix.get("accounts", [])
+                pool_address = ix_accounts[0] if ix_accounts else ""
+
                 swaps.append(ParsedSwap(
                     wallet=wallet,
                     signature=signature,
@@ -268,6 +310,7 @@ def parse_transaction_for_swaps(tx: dict) -> List[ParsedSwap]:
                     slot=slot,
                     block_time=block_time,
                     fee=fee,
+                    pool_address=pool_address,
                 ))
 
     except Exception as e:
