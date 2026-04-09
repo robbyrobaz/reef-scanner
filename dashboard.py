@@ -202,24 +202,36 @@ async def get_wallet_stats():
     except:
         current_balance = None
 
+    def _stats(trades_list):
+        """Compute stats for a list of trades."""
+        wins = sum(1 for t in trades_list if _is_profitable(t))
+        pnl = sum(_trade_pnl(t) for t in trades_list)
+        buys = sum(1 for t in trades_list if t.get("action", "").upper() == "BUY")
+        sells = sum(1 for t in trades_list if t.get("action", "").upper() == "SELL")
+        gains = [t for t in trades_list if _is_profitable(t)]
+        losses = [t for t in trades_list if not _is_profitable(t) and _trade_pnl(t) != 0]
+        gain_sum = sum(_trade_pnl(t) for t in gains)
+        loss_sum = sum(_trade_pnl(t) for t in losses)
+        n = len(trades_list)
+        return {
+            "pnl": pnl,
+            "trades": n,
+            "wins": wins,
+            "losses": len(losses),
+            "wr": (wins / n * 100) if n else 0,
+            "pf": abs(gain_sum / loss_sum) if loss_sum != 0 else 0,
+            "buys": buys,
+            "sells": sells,
+            "avg_win": (gain_sum / len(gains)) if gains else 0,
+            "avg_loss": (loss_sum / len(losses)) if losses else 0,
+            "best": max((_trade_pnl(t) for t in trades_list), default=0),
+            "worst": min((_trade_pnl(t) for t in trades_list), default=0),
+        }
+
     return {
-        # Paper (simulated)
-        "paper_pnl": paper_pnl,
-        "paper_trades": len(paper),
-        "paper_wins": paper_wins,
-        "paper_wr": (paper_wins / len(paper) * 100) if paper else 0,
-        "paper_pf": abs(paper_gain_sum / paper_loss_sum) if paper_loss_sum != 0 else 0,
-        # Live (real)
-        "live_pnl": live_pnl,
-        "live_trades": len(live),
-        "live_wins": live_wins,
-        "live_wr": (live_wins / len(live) * 100) if live else 0,
-        "live_pf": abs(live_gain_sum / live_loss_sum) if live_loss_sum != 0 else 0,
-        "live_buys": live_buys,
-        "live_sells": live_sells,
-        # Failed (skipped — informational only)
+        "paper": _stats(paper),
+        "live": _stats(live),
         "failed_trades": len(failed),
-        # Balance
         "starting_sol": starting_balance,
     }
 

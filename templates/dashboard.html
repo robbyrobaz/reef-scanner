@@ -24,13 +24,18 @@
     .status-bar { display: flex; gap: 16px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
     .status-bar span { white-space: nowrap; }
 
-    /* Stats bar */
-    .stats-bar { display: flex; gap: 2px; padding: 6px 24px; background: var(--bg2); border-bottom: 1px solid var(--border); flex-wrap: wrap; align-items: center; }
-    .sb-item { display: flex; flex-direction: column; align-items: center; padding: 4px 10px; min-width: 55px; }
-    .sb-val { font-size: 13px; font-weight: 700; color: var(--text); line-height: 1.2; }
-    .sb-lbl { font-size: 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
-    .sb-divider { font-size: 9px; font-weight: 700; color: var(--muted); padding: 0 6px; text-transform: uppercase; letter-spacing: 1px; }
-    .sb-sep { width: 1px; height: 24px; background: var(--border); margin: 0 6px; }
+    /* Stats cards */
+    .stats-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 12px 24px; border-bottom: 1px solid var(--border); }
+    @media (max-width: 768px) { .stats-cards { grid-template-columns: 1fr; } }
+    .sc { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; }
+    .sc-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+    .sc-title .dot { width: 8px; height: 8px; border-radius: 50%; }
+    .sc-pnl { font-size: 28px; font-weight: 800; line-height: 1.1; margin-bottom: 4px; }
+    .sc-sub { font-size: 11px; color: var(--muted); margin-bottom: 12px; }
+    .sc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(80px, 1fr)); gap: 8px; }
+    .sc-stat { text-align: center; }
+    .sc-stat-val { font-size: 16px; font-weight: 700; }
+    .sc-stat-lbl { font-size: 9px; color: var(--muted); text-transform: uppercase; }
 
     /* Tabs */
     .tabs { display: flex; border-bottom: 1px solid var(--border); padding: 0 24px; }
@@ -147,22 +152,42 @@
     </div>
   </header>
 
-  <!-- Copy Trading Stats Bar — always visible -->
-  <div id="stats-bar" class="stats-bar">
-    <div class="sb-divider">LIVE</div>
-    <div class="sb-item"><span class="sb-val" id="cs-live-pnl">—</span><span class="sb-lbl">PnL (SOL)</span></div>
-    <div class="sb-item"><span class="sb-val" id="cs-live-wr">—</span><span class="sb-lbl">Win%</span></div>
-    <div class="sb-item"><span class="sb-val" id="cs-live-pf">—</span><span class="sb-lbl">PF</span></div>
-    <div class="sb-item"><span class="sb-val" id="cs-live-ct">—</span><span class="sb-lbl">Trades</span></div>
-    <div class="sb-item"><span class="sb-val" id="cs-bal-pnl">—</span><span class="sb-lbl">Bal Δ</span></div>
-    <div class="sb-sep"></div>
-    <div class="sb-divider">PAPER</div>
-    <div class="sb-item"><span class="sb-val" id="cs-paper-pnl">—</span><span class="sb-lbl">PnL (SOL)</span></div>
-    <div class="sb-item"><span class="sb-val" id="cs-paper-wr">—</span><span class="sb-lbl">Win%</span></div>
-    <div class="sb-item"><span class="sb-val" id="cs-paper-pf">—</span><span class="sb-lbl">PF</span></div>
-    <div class="sb-item"><span class="sb-val" id="cs-paper-ct">—</span><span class="sb-lbl">Trades</span></div>
-    <div class="sb-sep"></div>
-    <div class="sb-item"><span class="sb-val" id="cs-failed" style="color:var(--muted)">—</span><span class="sb-lbl">Skipped</span></div>
+  <!-- Copy Trading Stats Cards — always visible -->
+  <div class="stats-cards">
+    <div class="sc" id="sc-live">
+      <div class="sc-title"><span class="dot" style="background:var(--green)"></span> LIVE TRADING</div>
+      <div class="sc-pnl" id="cs-live-pnl">—</div>
+      <div class="sc-sub">Closed PnL (SOL) &nbsp;|&nbsp; Balance Δ: <strong id="cs-bal-pnl">—</strong></div>
+      <div class="sc-grid">
+        <div class="sc-stat"><div class="sc-stat-val" id="cs-live-wr">—</div><div class="sc-stat-lbl">Win Rate</div></div>
+        <div class="sc-stat"><div class="sc-stat-val" id="cs-live-pf">—</div><div class="sc-stat-lbl">Profit Factor</div></div>
+        <div class="sc-stat"><div class="sc-stat-val" id="cs-live-trades">—</div><div class="sc-stat-lbl">Total</div></div>
+        <div class="sc-stat"><div class="sc-stat-val" id="cs-live-buys">—</div><div class="sc-stat-lbl">Buys</div></div>
+        <div class="sc-stat"><div class="sc-stat-val" id="cs-live-sells">—</div><div class="sc-stat-lbl">Sells</div></div>
+        <div class="sc-stat"><div class="sc-stat-val" id="cs-live-wins">—</div><div class="sc-stat-lbl">Wins</div></div>
+        <div class="sc-stat"><div class="sc-stat-val" id="cs-live-losses">—</div><div class="sc-stat-lbl">Losses</div></div>
+        <div class="sc-stat"><div class="sc-stat-val" id="cs-live-best">—</div><div class="sc-stat-lbl">Best</div></div>
+        <div class="sc-stat"><div class="sc-stat-val" id="cs-live-worst">—</div><div class="sc-stat-lbl">Worst</div></div>
+        <div class="sc-stat"><div class="sc-stat-val" id="cs-failed" style="color:var(--muted)">—</div><div class="sc-stat-lbl">Skipped</div></div>
+      </div>
+    </div>
+    <div class="sc" id="sc-paper">
+      <div class="sc-title"><span class="dot" style="background:var(--orange)"></span> PAPER TRADING</div>
+      <div class="sc-pnl" id="cs-paper-pnl">—</div>
+      <div class="sc-sub">Simulated Closed PnL (SOL)</div>
+      <div class="sc-grid">
+        <div class="sc-stat"><div class="sc-stat-val" id="cs-paper-wr">—</div><div class="sc-stat-lbl">Win Rate</div></div>
+        <div class="sc-stat"><div class="sc-stat-val" id="cs-paper-pf">—</div><div class="sc-stat-lbl">Profit Factor</div></div>
+        <div class="sc-stat"><div class="sc-stat-val" id="cs-paper-trades">—</div><div class="sc-stat-lbl">Total</div></div>
+        <div class="sc-stat"><div class="sc-stat-val" id="cs-paper-buys">—</div><div class="sc-stat-lbl">Buys</div></div>
+        <div class="sc-stat"><div class="sc-stat-val" id="cs-paper-sells">—</div><div class="sc-stat-lbl">Sells</div></div>
+        <div class="sc-stat"><div class="sc-stat-val" id="cs-paper-wins">—</div><div class="sc-stat-lbl">Wins</div></div>
+        <div class="sc-stat"><div class="sc-stat-val" id="cs-paper-losses">—</div><div class="sc-stat-lbl">Losses</div></div>
+        <div class="sc-stat"><div class="sc-stat-val" id="cs-paper-best">—</div><div class="sc-stat-lbl">Best</div></div>
+        <div class="sc-stat"><div class="sc-stat-val" id="cs-paper-worst">—</div><div class="sc-stat-lbl">Worst</div></div>
+        <div class="sc-stat"><div class="sc-stat-val" id="cs-paper-avgwin">—</div><div class="sc-stat-lbl">Avg Win</div></div>
+      </div>
+    </div>
   </div>
 
   <nav class="tabs">
@@ -698,31 +723,43 @@ async function loadCopyTrades() {
 async function loadCopyStats() {
   try {
     const [s, b] = await Promise.all([api('/api/wallet/stats'), api('/api/wallet/balance')]);
-    const pnlColor = (v) => v > 0 ? 'var(--green)' : v < 0 ? 'var(--red)' : '';
-    const pnlFmt = (v) => (v >= 0 ? '+' : '') + v.toFixed(4);
+    const pc = (v) => v > 0 ? 'var(--green)' : v < 0 ? 'var(--red)' : '';
+    const pf = (v) => (v >= 0 ? '+' : '') + v.toFixed(4);
+    const sf = (v) => Number(v||0).toFixed(6);
 
-    // Live stats
-    const lp = Number(s.live_pnl||0);
-    $('cs-live-pnl').textContent = pnlFmt(lp);
-    $('cs-live-pnl').style.color = pnlColor(lp);
-    $('cs-live-wr').textContent = (s.live_wr||0).toFixed(1) + '%';
-    $('cs-live-pf').textContent = (s.live_pf||0).toFixed(2);
-    $('cs-live-ct').textContent = fmt(s.live_trades||0);
+    function fill(prefix, d) {
+      const pnl = Number(d.pnl||0);
+      $(prefix+'-pnl').textContent = pf(pnl);
+      $(prefix+'-pnl').style.color = pc(pnl);
+      $(prefix+'-wr').textContent = (d.wr||0).toFixed(1) + '%';
+      $(prefix+'-pf').textContent = (d.pf||0).toFixed(2);
+      $(prefix+'-trades').textContent = fmt(d.trades||0);
+      $(prefix+'-buys').textContent = fmt(d.buys||0);
+      $(prefix+'-sells').textContent = fmt(d.sells||0);
+      $(prefix+'-wins').textContent = fmt(d.wins||0);
+      $(prefix+'-wins').style.color = d.wins > 0 ? 'var(--green)' : '';
+      $(prefix+'-losses').textContent = fmt(d.losses||0);
+      $(prefix+'-losses').style.color = d.losses > 0 ? 'var(--red)' : '';
+      $(prefix+'-best').textContent = sf(d.best);
+      $(prefix+'-best').style.color = 'var(--green)';
+      $(prefix+'-worst').textContent = sf(d.worst);
+      $(prefix+'-worst').style.color = d.worst < 0 ? 'var(--red)' : '';
+    }
 
-    // Balance delta (real P&L including fees)
+    fill('cs-live', s.live||{});
+    fill('cs-paper', s.paper||{});
+
+    // Paper avg win (extra stat)
+    const aw = Number((s.paper||{}).avg_win||0);
+    $('cs-paper-avgwin').textContent = sf(aw);
+    $('cs-paper-avgwin').style.color = 'var(--green)';
+
+    // Balance delta
     const bal = Number(b.balance_sol||0);
     const start = Number(s.starting_sol||0.18);
     const delta = bal - start;
-    $('cs-bal-pnl').textContent = pnlFmt(delta);
-    $('cs-bal-pnl').style.color = pnlColor(delta);
-
-    // Paper stats
-    const pp = Number(s.paper_pnl||0);
-    $('cs-paper-pnl').textContent = pnlFmt(pp);
-    $('cs-paper-pnl').style.color = pnlColor(pp);
-    $('cs-paper-wr').textContent = (s.paper_wr||0).toFixed(1) + '%';
-    $('cs-paper-pf').textContent = (s.paper_pf||0).toFixed(2);
-    $('cs-paper-ct').textContent = fmt(s.paper_trades||0);
+    $('cs-bal-pnl').textContent = pf(delta);
+    $('cs-bal-pnl').style.color = pc(delta);
 
     // Skipped
     $('cs-failed').textContent = fmt(s.failed_trades||0);
