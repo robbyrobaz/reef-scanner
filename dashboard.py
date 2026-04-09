@@ -174,34 +174,53 @@ async def get_wallet_stats():
     live = [t for t in trades if t.get("status") == "confirmed"]
     failed = [t for t in trades if t.get("status") == "failed"]
 
-    # Stats only from EXECUTED trades (paper + live), NOT failed
-    executed = paper + live
-    wins = sum(1 for t in executed if _is_profitable(t))
-    total_exec = len(executed)
-    win_rate = (wins / total_exec * 100) if total_exec > 0 else 0
-    profit = sum(_trade_pnl(t) for t in executed)
-    buys = sum(1 for t in executed if t.get("action", "").upper() == "BUY")
-    sells = sum(1 for t in executed if t.get("action", "").upper() == "SELL")
+    # ── PAPER stats (simulated, no real money) ──
+    paper_wins = sum(1 for t in paper if _is_profitable(t))
+    paper_pnl = sum(_trade_pnl(t) for t in paper)
+    paper_gains = [t for t in paper if _is_profitable(t)]
+    paper_losses = [t for t in paper if not _is_profitable(t) and _trade_pnl(t) != 0]
+    paper_gain_sum = sum(_trade_pnl(t) for t in paper_gains)
+    paper_loss_sum = sum(_trade_pnl(t) for t in paper_losses)
 
-    gains = [t for t in executed if _is_profitable(t)]
-    losses = [t for t in executed if not _is_profitable(t) and _trade_pnl(t) != 0]
-    avg_win = (sum(_trade_pnl(t) for t in gains) / len(gains)) if gains else 0
-    avg_loss = (sum(_trade_pnl(t) for t in losses) / len(losses)) if losses else 0
-    loss_sum = sum(_trade_pnl(t) for t in losses)
-    gain_sum = sum(_trade_pnl(t) for t in gains)
+    # ── LIVE stats (real money) ──
+    live_wins = sum(1 for t in live if _is_profitable(t))
+    live_pnl = sum(_trade_pnl(t) for t in live)
+    live_buys = sum(1 for t in live if t.get("action", "").upper() == "BUY")
+    live_sells = sum(1 for t in live if t.get("action", "").upper() == "SELL")
+    live_gains = [t for t in live if _is_profitable(t)]
+    live_losses = [t for t in live if not _is_profitable(t) and _trade_pnl(t) != 0]
+    live_gain_sum = sum(_trade_pnl(t) for t in live_gains)
+    live_loss_sum = sum(_trade_pnl(t) for t in live_losses)
+
+    # ── Real balance P&L (actual SOL change) ──
+    starting_balance = 0.18  # SOL sent to hot wallet
+    try:
+        import aiohttp
+        rpc_url = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
+        # We can't await here easily, so use the cached balance
+        current_balance = None
+    except:
+        current_balance = None
 
     return {
-        "pnl_sol": profit,
-        "win_rate": win_rate,
-        "profit_factor": abs(gain_sum / loss_sum) if loss_sum != 0 else 0,
-        "total_trades": total_exec,
+        # Paper (simulated)
+        "paper_pnl": paper_pnl,
         "paper_trades": len(paper),
+        "paper_wins": paper_wins,
+        "paper_wr": (paper_wins / len(paper) * 100) if paper else 0,
+        "paper_pf": abs(paper_gain_sum / paper_loss_sum) if paper_loss_sum != 0 else 0,
+        # Live (real)
+        "live_pnl": live_pnl,
         "live_trades": len(live),
+        "live_wins": live_wins,
+        "live_wr": (live_wins / len(live) * 100) if live else 0,
+        "live_pf": abs(live_gain_sum / live_loss_sum) if live_loss_sum != 0 else 0,
+        "live_buys": live_buys,
+        "live_sells": live_sells,
+        # Failed (skipped — informational only)
         "failed_trades": len(failed),
-        "total_buys": buys,
-        "total_sells": sells,
-        "avg_win": avg_win,
-        "avg_loss": avg_loss,
+        # Balance
+        "starting_sol": starting_balance,
     }
 
 def _is_profitable(t):

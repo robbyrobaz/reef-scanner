@@ -25,10 +25,12 @@
     .status-bar span { white-space: nowrap; }
 
     /* Stats bar */
-    .stats-bar { display: flex; gap: 2px; padding: 6px 24px; background: var(--bg2); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
-    .sb-item { display: flex; flex-direction: column; align-items: center; padding: 4px 12px; min-width: 60px; }
-    .sb-val { font-size: 14px; font-weight: 700; color: var(--text); line-height: 1.2; }
-    .sb-lbl { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+    .stats-bar { display: flex; gap: 2px; padding: 6px 24px; background: var(--bg2); border-bottom: 1px solid var(--border); flex-wrap: wrap; align-items: center; }
+    .sb-item { display: flex; flex-direction: column; align-items: center; padding: 4px 10px; min-width: 55px; }
+    .sb-val { font-size: 13px; font-weight: 700; color: var(--text); line-height: 1.2; }
+    .sb-lbl { font-size: 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+    .sb-divider { font-size: 9px; font-weight: 700; color: var(--muted); padding: 0 6px; text-transform: uppercase; letter-spacing: 1px; }
+    .sb-sep { width: 1px; height: 24px; background: var(--border); margin: 0 6px; }
 
     /* Tabs */
     .tabs { display: flex; border-bottom: 1px solid var(--border); padding: 0 24px; }
@@ -147,15 +149,20 @@
 
   <!-- Copy Trading Stats Bar — always visible -->
   <div id="stats-bar" class="stats-bar">
-    <div class="sb-item"><span class="sb-val" id="cs-pnl">—</span><span class="sb-lbl">PnL</span></div>
-    <div class="sb-item"><span class="sb-val" id="cs-winrate">—</span><span class="sb-lbl">Win%</span></div>
-    <div class="sb-item"><span class="sb-val" id="cs-pf">—</span><span class="sb-lbl">PF</span></div>
-    <div class="sb-item"><span class="sb-val" id="cs-paper">—</span><span class="sb-lbl">Paper</span></div>
-    <div class="sb-item"><span class="sb-val" id="cs-live">—</span><span class="sb-lbl">Live</span></div>
-    <div class="sb-item"><span class="sb-val" id="cs-failed">—</span><span class="sb-lbl">Failed</span></div>
-    <div class="sb-item"><span class="sb-val" id="cs-trades">—</span><span class="sb-lbl">Total</span></div>
-    <div class="sb-item"><span class="sb-val" id="cs-buys">—</span><span class="sb-lbl">Buys</span></div>
-    <div class="sb-item"><span class="sb-val" id="cs-sells">—</span><span class="sb-lbl">Sells</span></div>
+    <div class="sb-divider">LIVE</div>
+    <div class="sb-item"><span class="sb-val" id="cs-live-pnl">—</span><span class="sb-lbl">PnL (SOL)</span></div>
+    <div class="sb-item"><span class="sb-val" id="cs-live-wr">—</span><span class="sb-lbl">Win%</span></div>
+    <div class="sb-item"><span class="sb-val" id="cs-live-pf">—</span><span class="sb-lbl">PF</span></div>
+    <div class="sb-item"><span class="sb-val" id="cs-live-ct">—</span><span class="sb-lbl">Trades</span></div>
+    <div class="sb-item"><span class="sb-val" id="cs-bal-pnl">—</span><span class="sb-lbl">Bal Δ</span></div>
+    <div class="sb-sep"></div>
+    <div class="sb-divider">PAPER</div>
+    <div class="sb-item"><span class="sb-val" id="cs-paper-pnl">—</span><span class="sb-lbl">PnL (SOL)</span></div>
+    <div class="sb-item"><span class="sb-val" id="cs-paper-wr">—</span><span class="sb-lbl">Win%</span></div>
+    <div class="sb-item"><span class="sb-val" id="cs-paper-pf">—</span><span class="sb-lbl">PF</span></div>
+    <div class="sb-item"><span class="sb-val" id="cs-paper-ct">—</span><span class="sb-lbl">Trades</span></div>
+    <div class="sb-sep"></div>
+    <div class="sb-item"><span class="sb-val" id="cs-failed" style="color:var(--muted)">—</span><span class="sb-lbl">Skipped</span></div>
   </div>
 
   <nav class="tabs">
@@ -690,19 +697,35 @@ async function loadCopyTrades() {
 // ── Copy Stats ─────────────────────────────────────────────────────────────
 async function loadCopyStats() {
   try {
-    const s = await api('/api/wallet/stats');
-    const pnl = Number(s.pnl_sol||0);
-    $('cs-pnl').textContent = (pnl >= 0 ? '+' : '') + pnl.toFixed(4);
-    $('cs-pnl').style.color = pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : '';
-    $('cs-winrate').textContent = (s.win_rate||0).toFixed(1) + '%';
-    $('cs-pf').textContent = (s.profit_factor||0).toFixed(2);
-    $('cs-paper').textContent = fmt(s.paper_trades || 0);
-    $('cs-live').textContent = fmt(s.live_trades || 0);
-    $('cs-failed').textContent = fmt(s.failed_trades || 0);
-    if (s.failed_trades > 0) $('cs-failed').style.color = 'var(--red)';
-    $('cs-trades').textContent = fmt(s.total_trades || 0);
-    $('cs-buys').textContent = fmt(s.total_buys || 0);
-    $('cs-sells').textContent = fmt(s.total_sells || 0);
+    const [s, b] = await Promise.all([api('/api/wallet/stats'), api('/api/wallet/balance')]);
+    const pnlColor = (v) => v > 0 ? 'var(--green)' : v < 0 ? 'var(--red)' : '';
+    const pnlFmt = (v) => (v >= 0 ? '+' : '') + v.toFixed(4);
+
+    // Live stats
+    const lp = Number(s.live_pnl||0);
+    $('cs-live-pnl').textContent = pnlFmt(lp);
+    $('cs-live-pnl').style.color = pnlColor(lp);
+    $('cs-live-wr').textContent = (s.live_wr||0).toFixed(1) + '%';
+    $('cs-live-pf').textContent = (s.live_pf||0).toFixed(2);
+    $('cs-live-ct').textContent = fmt(s.live_trades||0);
+
+    // Balance delta (real P&L including fees)
+    const bal = Number(b.balance_sol||0);
+    const start = Number(s.starting_sol||0.18);
+    const delta = bal - start;
+    $('cs-bal-pnl').textContent = pnlFmt(delta);
+    $('cs-bal-pnl').style.color = pnlColor(delta);
+
+    // Paper stats
+    const pp = Number(s.paper_pnl||0);
+    $('cs-paper-pnl').textContent = pnlFmt(pp);
+    $('cs-paper-pnl').style.color = pnlColor(pp);
+    $('cs-paper-wr').textContent = (s.paper_wr||0).toFixed(1) + '%';
+    $('cs-paper-pf').textContent = (s.paper_pf||0).toFixed(2);
+    $('cs-paper-ct').textContent = fmt(s.paper_trades||0);
+
+    // Skipped
+    $('cs-failed').textContent = fmt(s.failed_trades||0);
   } catch (e) {
     console.error('loadCopyStats failed:', e);
   }
