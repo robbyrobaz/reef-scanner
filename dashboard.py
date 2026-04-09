@@ -243,6 +243,50 @@ def _trade_pnl(t):
     """CSV field is 'realized_pnl_sol' (not 'copy_pnl_sol')."""
     return float(t.get("realized_pnl_sol", 0) or 0)
 
+# ── API: Open Positions (token balances) ─────────────────────────────────────
+@app.get("/api/wallet/positions")
+async def get_wallet_positions():
+    cfg = load_copy_config()
+    addr = cfg.get("user_wallet", "")
+    if not addr:
+        return {"positions": [], "count": 0}
+    try:
+        import aiohttp
+        rpc_url = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                rpc_url,
+                json={
+                    "jsonrpc": "2.0", "id": 1,
+                    "method": "getTokenAccountsByOwner",
+                    "params": [
+                        addr,
+                        {"programId": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"},
+                        {"encoding": "jsonParsed"},
+                    ],
+                },
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    accounts = data.get("result", {}).get("value", [])
+                    positions = []
+                    for acc in accounts:
+                        info = acc["account"]["data"]["parsed"]["info"]
+                        amount = int(info["tokenAmount"]["amount"])
+                        if amount > 0:
+                            decimals = info["tokenAmount"]["decimals"]
+                            positions.append({
+                                "mint": info["mint"],
+                                "amount": amount / (10 ** decimals),
+                                "raw": amount,
+                                "decimals": decimals,
+                            })
+                    return {"positions": positions, "count": len(positions)}
+    except Exception:
+        pass
+    return {"positions": [], "count": 0}
+
 # ── API: Wallet Balance ──────────────────────────────────────────────────────
 @app.get("/api/wallet/balance")
 async def get_wallet_balance():

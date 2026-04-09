@@ -162,6 +162,7 @@
         <div class="sc-stat"><div class="sc-stat-val" id="cs-live-wr">—</div><div class="sc-stat-lbl">Win Rate</div></div>
         <div class="sc-stat"><div class="sc-stat-val" id="cs-live-pf">—</div><div class="sc-stat-lbl">Profit Factor</div></div>
         <div class="sc-stat"><div class="sc-stat-val" id="cs-live-trades">—</div><div class="sc-stat-lbl">Total</div></div>
+        <div class="sc-stat"><div class="sc-stat-val" id="cs-live-open" style="color:var(--blue)">—</div><div class="sc-stat-lbl">Open</div></div>
         <div class="sc-stat"><div class="sc-stat-val" id="cs-live-buys">—</div><div class="sc-stat-lbl">Buys</div></div>
         <div class="sc-stat"><div class="sc-stat-val" id="cs-live-sells">—</div><div class="sc-stat-lbl">Sells</div></div>
         <div class="sc-stat"><div class="sc-stat-val" id="cs-live-wins">—</div><div class="sc-stat-lbl">Wins</div></div>
@@ -722,7 +723,7 @@ async function loadCopyTrades() {
 // ── Copy Stats ─────────────────────────────────────────────────────────────
 async function loadCopyStats() {
   try {
-    const [s, b] = await Promise.all([api('/api/wallet/stats'), api('/api/wallet/balance')]);
+    const [s, b, p] = await Promise.all([api('/api/wallet/stats'), api('/api/wallet/balance'), api('/api/wallet/positions')]);
     const pc = (v) => v > 0 ? 'var(--green)' : v < 0 ? 'var(--red)' : '';
     const pf = (v) => (v >= 0 ? '+' : '') + v.toFixed(4);
     const sf = (v) => Number(v||0).toFixed(6);
@@ -748,6 +749,9 @@ async function loadCopyStats() {
 
     fill('cs-live', s.live||{});
     fill('cs-paper', s.paper||{});
+
+    // Open positions (on-chain token balances)
+    $('cs-live-open').textContent = fmt(p.count||0);
 
     // Paper avg win (extra stat)
     const aw = Number((s.paper||{}).avg_win||0);
