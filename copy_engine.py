@@ -35,6 +35,8 @@ from config import (
 )
 from copy_config import load_copy_config, save_copy_config, CopyConfig, CopyEntry
 from swap_parser import parse_transaction_for_swaps, ParsedSwap
+import websockets
+
 from swap_executor import execute_swap_legacy, load_solana_keypair, DRY_RUN as EXECUTOR_DRY_RUN, SwapResult
 from pumpfun_executor import execute_pumpfun_swap
 from positions import (
@@ -47,6 +49,15 @@ from positions import (
 DRY_RUN = True  # Default to safe mode
 KEYPAIR_LOADED = None
 POSITIONS: Dict[str, "Position"] = {}
+
+# Age filter: skip trades older than this many seconds (pump.fun tokens die fast)
+# Override with env var COPY_MAX_TRADE_AGE_S. Default 120s — generous window since
+# WS listener catches fresh trades; polling loop is a slower fallback.
+MAX_TRADE_AGE_S = int(os.getenv("COPY_MAX_TRADE_AGE_S", "120"))
+
+# Dedup set shared between WS listener and polling loop — prevents double-copying
+# a trade that arrives via WS and then shows up again in polling 5s later.
+_SEEN_SIGS: set = set()
 
 
 # ── Paper Position Tracking (for realized PnL) ──────────────────────────────
@@ -312,12 +323,15 @@ async def check_wallet_for_new_trades(
 
     new_sigs = list(reversed(new_sigs))  # Oldest first
 
-    MAX_TRADE_AGE_S = 45  # skip trades older than 45s — pump.fun tokens die fast
-
     for sig_info in new_sigs:
         sig = sig_info["signature"]
 
-        # Skip stale trades — by the time we detect them, the token is likely dead
+        # Skip if already handled by the WS listener
+        if sig in _SEEN_SIGS:
+            continue
+        _SEEN_SIGS.add(sig)
+
+        # Skip stale trades — by the time we detect them, the token may be dead
         block_time = sig_info.get("blockTime") or 0
         trade_age_s = int(time.time()) - block_time
         if block_time and trade_age_s > MAX_TRADE_AGE_S:
@@ -419,6 +433,123 @@ async def run_engine_cycle(config: CopyConfig) -> int:
     return total
 
 
+async def ws_copy_listener():
+    """
+    Real-time copy trading via PumpPortal WebSocket subscribeAccountTrade.
+
+    PumpPortal streams every pump.fun trade from subscribed wallets within
+    milliseconds of the transaction — far faster than the 5s polling loop.
+    Runs concurrently with the polling loop; deduped via _SEEN_SIGS.
+
+    Reconnects with exponential backoff on disconnect.
+    """
+    global DRY_RUN, KEYPAIR_LOADED
+    WS_URL = "wss://pumpportal.fun/api/data"
+    delay = 2
+
+    while True:
+        try:
+            config = load_copy_config()
+            enabled = {addr: e for addr, e in config.copies.items() if e.enabled}
+            if config.user_wallet and config.user_wallet in enabled:
+                del enabled[config.user_wallet]
+
+            wallets = list(enabled.keys())
+            if not wallets:
+                await asyncio.sleep(30)
+                continue
+
+            paper_positions = load_paper_positions()
+
+            print(f"  🌐 WS: connecting to PumpPortal ({len(wallets)} wallets)...")
+            async with websockets.connect(
+                WS_URL,
+                ping_interval=20,
+                ping_timeout=20,
+                close_timeout=10,
+            ) as ws:
+                await ws.send(json.dumps({
+                    "method": "subscribeAccountTrade",
+                    "keys": wallets,
+                }))
+                print(f"  ✅ WS: subscribed to {len(wallets)} wallet trades")
+                delay = 2  # reset backoff
+
+                async for raw_msg in ws:
+                    try:
+                        data = json.loads(raw_msg)
+                    except json.JSONDecodeError:
+                        continue
+
+                    sig     = data.get("signature", "")
+                    trader  = data.get("traderPublicKey", "")
+                    mint    = data.get("mint", "")
+                    tx_type = data.get("txType", "")   # "buy" or "sell"
+                    sol_amt = float(data.get("sol", 0))
+
+                    if not sig or not trader or not mint or not tx_type:
+                        continue
+
+                    # Dedup with polling loop
+                    if sig in _SEEN_SIGS:
+                        continue
+                    _SEEN_SIGS.add(sig)
+
+                    # Re-read config in case wallets changed
+                    config = load_copy_config()
+                    entry = config.copies.get(trader)
+                    if not entry or not entry.enabled:
+                        continue
+                    if trader == config.user_wallet:
+                        continue
+
+                    action = "BUY" if tx_type == "buy" else "SELL"
+                    scale  = min(1.0, entry.alloc_sol / max(sol_amt, 0.0001))
+                    scaled = round(sol_amt * scale, 9)
+                    scaled = max(COPY_MIN_ALLOC_SOL, min(COPY_MAX_ALLOC_SOL, scaled))
+
+                    tok_amt = float(data.get("tokenAmount", 1)) or 1
+                    price   = sol_amt / tok_amt
+
+                    trade = CopyTrade(
+                        timestamp=int(time.time()),
+                        source_wallet=trader,
+                        source_sig=sig,
+                        our_wallet=config.user_wallet,
+                        action=action,
+                        token_mint=mint,
+                        amount_sol=sol_amt,
+                        scaled_amount_sol=scaled,
+                        source_price_sol=price,
+                    )
+
+                    print(f"  🌊 WS {action} {mint[:16]}... by {trader[:16]}... {sol_amt:.4f} SOL → copying {scaled:.4f} SOL")
+
+                    if DRY_RUN:
+                        trade.realized_pnl_sol = record_paper_trade_pnl(trade, paper_positions)
+                        trade.status = "dry_run"
+                        save_copy_trade(trade)
+                        save_paper_positions(paper_positions)
+                    else:
+                        success = await execute_copy_trade(trade)
+                        trade.status = "confirmed" if success else "failed"
+                        save_copy_trade(trade)
+
+                    # Update last_sig in config
+                    entry.last_sig = sig
+                    entry.last_copy_ts = int(time.time())
+                    save_copy_config(config)
+
+        except (websockets.ConnectionClosed, websockets.InvalidURI,
+                websockets.InvalidHandshake, OSError, ConnectionError) as e:
+            print(f"  ⚠️  WS disconnected: {e} — reconnecting in {delay}s")
+        except Exception as e:
+            print(f"  ❌ WS unexpected error: {e} — reconnecting in {delay}s")
+
+        await asyncio.sleep(delay)
+        delay = min(delay * 2, 120)
+
+
 async def run_engine():
     global DRY_RUN, KEYPAIR_LOADED
     
@@ -467,20 +598,29 @@ async def run_engine():
     enabled_count = sum(1 for e in config.copies.values() if e.enabled)
     print(f"   Enabled copies: {enabled_count}")
     print(f"   Global enabled: {config.global_enabled}")
+    print(f"   Trade age limit: {MAX_TRADE_AGE_S}s (env: COPY_MAX_TRADE_AGE_S)")
     print()
 
-    while True:
-        try:
-            config = load_copy_config()
-            if config.global_enabled:
-                copied = await run_engine_cycle(config)
-                if copied > 0:
-                    status = "🐸" if DRY_RUN else "✅"
-                    print(f"  {status} {copied} trade(s) processed")
-        except Exception as e:
-            print(f"  ❌ Engine error: {e}")
+    async def polling_loop():
+        while True:
+            try:
+                config = load_copy_config()
+                if config.global_enabled:
+                    copied = await run_engine_cycle(config)
+                    if copied > 0:
+                        status = "🐸" if DRY_RUN else "✅"
+                        print(f"  {status} {copied} trade(s) processed (polling)")
+            except Exception as e:
+                print(f"  ❌ Engine error: {e}")
+            await asyncio.sleep(COPY_ENGINE_INTERVAL_S)
 
-        await asyncio.sleep(COPY_ENGINE_INTERVAL_S)
+    # Run websocket listener and polling loop concurrently.
+    # WS catches pump.fun trades in real-time; polling is the fallback
+    # for non-pump trades and covers WS gaps during reconnects.
+    await asyncio.gather(
+        ws_copy_listener(),
+        polling_loop(),
+    )
 
 
 if __name__ == "__main__":
