@@ -92,8 +92,8 @@ async def get_jupiter_quote(
             async with session.get(JUPITER_QUOTE_API, params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                 if resp.status == 200:
                     return await resp.json()
-                else:
-                    print(f"    ⚠️  Jupiter quote error: {resp.status}")
+                body = await resp.text()
+                print(f"    ⚠️  Jupiter quote {resp.status}: {body[:200]}")
     except Exception as e:
         print(f"    ⚠️  Jupiter quote failed: {e}")
     return None
@@ -309,6 +309,34 @@ async def load_solana_keypair(keypair_path: str = "") -> Optional[Keypair]:
 
 
 # ── Simpler legacy transaction approach ────────────────────────────────
+async def get_token_balance(wallet: str, token_mint: str) -> int:
+    """Return the raw token balance (in base units) for a wallet, or 0 on failure."""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                HELIUS_RPC_URL,
+                json={
+                    "jsonrpc": "2.0", "id": 1,
+                    "method": "getTokenAccountsByOwner",
+                    "params": [
+                        wallet,
+                        {"mint": token_mint},
+                        {"encoding": "jsonParsed"},
+                    ],
+                },
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    accounts = data.get("result", {}).get("value", [])
+                    if accounts:
+                        raw = accounts[0]["account"]["data"]["parsed"]["info"]["tokenAmount"]["amount"]
+                        return int(raw)
+    except Exception as e:
+        print(f"    ⚠️  Token balance lookup failed: {e}")
+    return 0
+
+
 async def execute_swap_legacy(
     keypair: Keypair,
     input_mint: str,
@@ -318,14 +346,25 @@ async def execute_swap_legacy(
 ) -> SwapResult:
     """
     Execute swap using legacy transaction format (simpler, more compatible).
+
+    For BUY  (input=SOL,   output=token): amount_sol = SOL to spend
+    For SELL (input=token, output=SOL):   amount_sol is ignored; actual token balance is queried.
     """
     if DRY_RUN:
         print(f"    🐸 DRY RUN: would swap {amount_sol:.4f} SOL")
         return SwapResult(success=True, signature="DRY_RUN", input_amount=amount_sol)
-    
-    amount_lamports = int(amount_sol * 1e9)
+
     if input_mint == "SOL":
         input_mint = SOL_MINT
+
+    # For SELL: query actual token balance rather than guessing token units from a SOL amount
+    if input_mint != SOL_MINT:
+        amount_lamports = await get_token_balance(str(keypair.pubkey()), input_mint)
+        if amount_lamports == 0:
+            return SwapResult(success=False, error=f"No {input_mint[:16]}... balance to sell")
+        print(f"    📊 Selling {amount_lamports} raw units of {input_mint[:16]}...")
+    else:
+        amount_lamports = int(amount_sol * 1e9)
     
     # Get quote with legacy format
     params = {
@@ -340,7 +379,8 @@ async def execute_swap_legacy(
             # Get quote
             async with session.get(JUPITER_QUOTE_API, params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                 if resp.status != 200:
-                    return SwapResult(success=False, error=f"Quote error {resp.status}")
+                    body = await resp.text()
+                    return SwapResult(success=False, error=f"Quote error {resp.status}: {body[:150]}")
                 quote = await resp.json()
             
             # Get swap tx

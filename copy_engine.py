@@ -255,8 +255,9 @@ async def execute_copy_trade(trade: CopyTrade) -> bool:
             pool="auto",
         )
         
-        # If PumpPortal fails (graduated token), fall back to Jupiter
-        if not result.success and "400" in (result.error or ""):
+        # If PumpPortal fails (e.g. token graduated off bonding curve), fall back to Jupiter
+        if not result.success:
+            print(f"    ⚠️  PumpPortal failed ({result.error[:80]}), trying Jupiter...")
             if trade.action == "BUY":
                 result = await execute_swap_legacy(
                     KEYPAIR_LOADED, SOL_MINT, trade.token_mint,
@@ -311,8 +312,18 @@ async def check_wallet_for_new_trades(
 
     new_sigs = list(reversed(new_sigs))  # Oldest first
 
+    MAX_TRADE_AGE_S = 45  # skip trades older than 45s — pump.fun tokens die fast
+
     for sig_info in new_sigs:
         sig = sig_info["signature"]
+
+        # Skip stale trades — by the time we detect them, the token is likely dead
+        block_time = sig_info.get("blockTime") or 0
+        trade_age_s = int(time.time()) - block_time
+        if block_time and trade_age_s > MAX_TRADE_AGE_S:
+            print(f"    ⏩ Skipping {sig[:20]}... — trade is {trade_age_s}s old (>{MAX_TRADE_AGE_S}s limit)")
+            continue
+
         tx = await get_transaction(sig)
         if not tx:
             continue
