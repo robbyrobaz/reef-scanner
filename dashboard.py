@@ -12,7 +12,7 @@ from pathlib import Path
 from functools import wraps
 
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 import jinja2
 
@@ -440,6 +440,63 @@ async def wallet_disconnect():
     cfg["keypair_path"] = ""
     _save_config(cfg)
     return {"ok": True}
+
+# ── API: Engine Log Tail ──────────────────────────────────────────────────────
+LOG_PATH = BASE_DIR / "cron" / "copy_engine.log"
+
+@app.get("/api/log/tail")
+async def log_tail(lines: int = 200):
+    """Return last N lines of copy_engine.log as JSON array."""
+    if not LOG_PATH.exists():
+        return {"lines": [], "exists": False}
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["tail", "-n", str(lines), str(LOG_PATH)],
+            capture_output=True, text=True, timeout=5
+        )
+        return {"lines": result.stdout.splitlines(), "exists": True}
+    except Exception as e:
+        return {"lines": [], "exists": True, "error": str(e)}
+
+@app.get("/api/log/stream")
+async def log_stream():
+    """SSE stream of copy_engine.log — sends last 100 lines then follows new output."""
+    async def event_gen():
+        # Send last 100 lines on connect
+        if LOG_PATH.exists():
+            try:
+                import subprocess
+                result = subprocess.run(
+                    ["tail", "-n", "100", str(LOG_PATH)],
+                    capture_output=True, text=True, timeout=5
+                )
+                for line in result.stdout.splitlines():
+                    safe = line.replace("\n", " ").replace("\r", "")
+                    yield f"data: {safe}\n\n"
+            except Exception:
+                pass
+
+        # Follow new lines
+        if LOG_PATH.exists():
+            with LOG_PATH.open() as f:
+                f.seek(0, 2)  # seek to end
+                while True:
+                    line = f.readline()
+                    if line:
+                        safe = line.rstrip().replace("\n", " ").replace("\r", "")
+                        yield f"data: {safe}\n\n"
+                    else:
+                        await asyncio.sleep(0.5)
+        else:
+            yield "data: [log file not found — engine may not be running]\n\n"
+            return
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def _save_config(cfg):

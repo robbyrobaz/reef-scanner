@@ -194,6 +194,7 @@
   <nav class="tabs">
     <button class="tab active" data-tab="discovery" onclick="switchTab('discovery')">🔍 Discovery</button>
     <button class="tab" data-tab="copy" onclick="switchTab('copy')">🤝 Copy Trading</button>
+    <button class="tab" data-tab="log" onclick="switchTab('log')">📡 Engine Log</button>
   </nav>
 
   <!-- ===== DISCOVERY TAB ===== -->
@@ -287,6 +288,23 @@
 
   </section>
 
+  <!-- ===== ENGINE LOG TAB ===== -->
+  <section id="tab-log" class="tab-content">
+    <div class="section">
+      <h2>📡 COPY ENGINE LOG <span class="sub" id="log-status">connecting…</span></h2>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
+        <button class="btn btn-small" onclick="clearLog()">🗑 Clear</button>
+        <button class="btn btn-small" id="log-scroll-btn" onclick="toggleLogScroll()">⏬ Auto-scroll: ON</button>
+        <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px;">
+          <input type="checkbox" id="log-filter-err" onchange="filterLogLines()" style="width:auto;"> Errors only
+        </label>
+        <input type="text" id="log-filter-text" placeholder="Filter text…" oninput="filterLogLines()"
+          style="padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:12px;width:180px;">
+      </div>
+      <pre id="log-output" style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px;font-size:12px;font-family:monospace;height:520px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;color:#c9d1d9;line-height:1.5;"></pre>
+    </div>
+  </section>
+
   <footer class="footer">
     Reef Scanner • <span class="live-dot"></span> Live • <a href="https://github.com/robbyrobaz/reef-scanner" target="_blank">GitHub</a>
   </footer>
@@ -365,6 +383,7 @@ function switchTab(name) {
   document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === 'tab-' + name));
   if (name === 'discovery') loadDiscovery();
   if (name === 'copy') loadCopyTab();
+  if (name === 'log') initLogStream();
 }
 
 // ── Uptime ─────────────────────────────────────────────────────────────────
@@ -805,6 +824,94 @@ async function loadBalance(addr) {
   } catch(e) {
     $('hot-balance').textContent = '—';
   }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// ENGINE LOG TAB
+// ══════════════════════════════════════════════════════════════════════════
+let logEventSource = null;
+let logAutoScroll = true;
+let allLogLines = [];
+const MAX_LOG_LINES = 500;
+
+function initLogStream() {
+  if (logEventSource) return; // already connected
+  const output = $('log-output');
+  const status = $('log-status');
+  if (!output) return;
+
+  if (status) status.textContent = 'connecting…';
+  try {
+    logEventSource = new EventSource(BASE + '/api/log/stream');
+  } catch(e) {
+    if (output) output.textContent = 'EventSource not supported in this browser.';
+    return;
+  }
+
+  logEventSource.onopen = function() {
+    if (status) status.style.color = 'var(--green)';
+    if (status) status.textContent = 'live';
+  };
+
+  logEventSource.onmessage = function(e) {
+    const line = e.data;
+    allLogLines.push(line);
+    if (allLogLines.length > MAX_LOG_LINES) allLogLines.shift();
+    renderLogLines();
+  };
+
+  logEventSource.onerror = function() {
+    if (status) { status.textContent = 'disconnected — reconnecting…'; status.style.color = 'var(--red)'; }
+    // EventSource auto-reconnects; reset on reconnect
+    logEventSource.onopen = function() {
+      if (status) { status.textContent = 'live'; status.style.color = 'var(--green)'; }
+    };
+  };
+}
+
+function renderLogLines() {
+  const output = $('log-output');
+  if (!output) return;
+  const errOnly = $('log-filter-err')?.checked;
+  const filterText = ($('log-filter-text')?.value || '').toLowerCase();
+
+  const filtered = allLogLines.filter(function(l) {
+    if (errOnly && !/error|fail|warn|exception|traceback|❌|⚠/i.test(l)) return false;
+    if (filterText && !l.toLowerCase().includes(filterText)) return false;
+    return true;
+  });
+
+  // Colorize lines
+  output.innerHTML = filtered.map(function(l) {
+    let cls = '';
+    if (/error|fail|exception|traceback|❌/i.test(l)) cls = 'color:var(--red)';
+    else if (/warn|⚠/i.test(l)) cls = 'color:var(--orange)';
+    else if (/✅|landed|confirmed|success/i.test(l)) cls = 'color:var(--green)';
+    else if (/buy/i.test(l)) cls = 'color:#3fb950';
+    else if (/sell/i.test(l)) cls = 'color:#f85149';
+    const escaped = l.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    return cls ? '<span style="' + cls + '">' + escaped + '</span>' : escaped;
+  }).join('\n');
+
+  if (logAutoScroll) output.scrollTop = output.scrollHeight;
+}
+
+function filterLogLines() { renderLogLines(); }
+
+function clearLog() {
+  allLogLines = [];
+  const output = $('log-output');
+  if (output) output.innerHTML = '';
+}
+
+function toggleLogScroll() {
+  logAutoScroll = !logAutoScroll;
+  const btn = $('log-scroll-btn');
+  if (btn) btn.textContent = '⏬ Auto-scroll: ' + (logAutoScroll ? 'ON' : 'OFF');
+}
+
+function stopLogStream() {
+  if (logEventSource) { logEventSource.close(); logEventSource = null; }
 }
 
 document.addEventListener('DOMContentLoaded', function() {
