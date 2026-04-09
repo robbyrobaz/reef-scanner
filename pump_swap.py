@@ -64,6 +64,9 @@ def buy(client: Client, payer_keypair: Keypair, pair_address: str, sol_in: float
         base_token_program = token_info.owner
         decimal = token_info.data.parsed['info']['decimals']
 
+        # Dynamically compute protocol fee token account for base_mint (fixes ConstraintTokenMint for all pool orientations)
+        protocol_fee_token_account = get_associated_token_address(PROTOCOL_FEE_RECIPIENT, mint, base_token_program)
+
         print("Calculating transaction amounts...")
         sol_decimal = 1e9
         token_decimal = 10**decimal
@@ -77,7 +80,7 @@ def buy(client: Client, payer_keypair: Keypair, pair_address: str, sol_in: float
 
         print("Checking for existing token account...")
         token_account_check = client.get_token_accounts_by_owner(payer_keypair.pubkey(), TokenAccountOpts(mint), Processed)
-        
+
         if token_account_check.value:
             token_account = token_account_check.value[0].pubkey
             token_account_instruction = None
@@ -129,7 +132,7 @@ def buy(client: Client, payer_keypair: Keypair, pair_address: str, sol_in: float
             AccountMeta(pubkey=pool_keys.pool_base_token_account, is_signer=False, is_writable=True),
             AccountMeta(pubkey=pool_keys.pool_quote_token_account, is_signer=False, is_writable=True),
             AccountMeta(pubkey=PROTOCOL_FEE_RECIPIENT, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=PROTOCOL_FEE_RECIPIENT_TOKEN_ACCOUNT, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=protocol_fee_token_account, is_signer=False, is_writable=True),
             AccountMeta(pubkey=base_token_program, is_signer=False, is_writable=False),
             AccountMeta(pubkey=TOKEN_PROGRAM_ID, is_signer=False, is_writable=False),
             AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
@@ -220,6 +223,9 @@ def sell(client: Client, payer_keypair: Keypair, pair_address: str, percentage: 
         base_token_program = token_info.owner
         decimal = token_info.data.parsed['info']['decimals']
 
+        # Dynamically compute protocol fee token account for base_mint (fixes ConstraintTokenMint for all pool orientations)
+        protocol_fee_token_account = get_associated_token_address(PROTOCOL_FEE_RECIPIENT, mint, base_token_program)
+
         if not (1 <= percentage <= 100):
             print("Percentage must be between 1 and 100.")
             return False
@@ -283,14 +289,14 @@ def sell(client: Client, payer_keypair: Keypair, pair_address: str, percentage: 
             AccountMeta(pubkey=pool_keys.pool_base_token_account, is_signer=False, is_writable=True),
             AccountMeta(pubkey=pool_keys.pool_quote_token_account, is_signer=False, is_writable=True),
             AccountMeta(pubkey=PROTOCOL_FEE_RECIPIENT, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=PROTOCOL_FEE_RECIPIENT_TOKEN_ACCOUNT, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=protocol_fee_token_account, is_signer=False, is_writable=True),
             AccountMeta(pubkey=base_token_program, is_signer=False, is_writable=False),
             AccountMeta(pubkey=TOKEN_PROGRAM_ID, is_signer=False, is_writable=False),
             AccountMeta(pubkey=SYSTEM_PROGRAM, is_signer=False, is_writable=False),
             AccountMeta(pubkey=ASSOCIATED_TOKEN_PROGRAM, is_signer=False, is_writable=False),
             AccountMeta(pubkey=EVENT_AUTH, is_signer=False, is_writable=False),
             AccountMeta(pubkey=PF_AMM, is_signer=False, is_writable=False),
-            AccountMeta(pubkey=creator_vault_ata, is_signer=False, is_writable=True), 
+            AccountMeta(pubkey=creator_vault_ata, is_signer=False, is_writable=True),
             AccountMeta(pubkey=creator_vault_authority, is_signer=False, is_writable=False),
             AccountMeta(pubkey=fee_config, is_signer=False, is_writable=False),
             AccountMeta(pubkey=FEE_PROGRAM, is_signer=False, is_writable=False),
