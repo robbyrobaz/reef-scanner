@@ -32,6 +32,9 @@ import aiohttp
 
 DRY_RUN = True
 
+# Global 429 cooldown — when Jupiter rate-limits us, stop calling for a bit
+_jupiter_cooldown_until: float = 0.0
+
 # ── Constants ───────────────────────────────────────────────────────────
 JUPITER_QUOTE_API = "https://api.jup.ag/swap/v1/quote"
 JUPITER_SWAP_API = "https://api.jup.ag/swap/v1/swap"
@@ -376,8 +379,18 @@ async def execute_swap_legacy(
     
     try:
         async with aiohttp.ClientSession() as session:
+            # Respect 429 cooldown
+            global _jupiter_cooldown_until
+            if time.time() < _jupiter_cooldown_until:
+                wait = _jupiter_cooldown_until - time.time()
+                print(f"    ⏸️  Jupiter 429 cooldown — skipping for {wait:.0f}s")
+                return SwapResult(success=False, error="Jupiter rate-limited (cooling down)")
+
             # Get quote
             async with session.get(JUPITER_QUOTE_API, params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status == 429:
+                    _jupiter_cooldown_until = time.time() + 30
+                    return SwapResult(success=False, error="Quote error 429 (Jupiter rate limit — 30s cooldown)")
                 if resp.status != 200:
                     body = await resp.text()
                     return SwapResult(success=False, error=f"Quote error {resp.status}: {body[:150]}")

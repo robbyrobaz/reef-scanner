@@ -531,8 +531,20 @@ async def ws_copy_listener():
                         save_copy_trade(trade)
                         save_paper_positions(paper_positions)
                     else:
-                        success = await execute_copy_trade(trade)
-                        trade.status = "confirmed" if success else "failed"
+                        # WS events are always pump.fun — use PumpPortal directly, no Jupiter fallback
+                        if KEYPAIR_LOADED is None:
+                            KEYPAIR_LOADED = await load_solana_keypair()
+                        if KEYPAIR_LOADED:
+                            result = await execute_pumpfun_swap(
+                                KEYPAIR_LOADED, action.lower(), mint, scaled,
+                                slippage=15, priority_fee=0.005, pool="auto",
+                            )
+                            trade.our_sig = result.signature if result.success else ""
+                            trade.error = result.error if not result.success else ""
+                            trade.status = "confirmed" if result.success else "failed"
+                        else:
+                            trade.status = "failed"
+                            trade.error = "No keypair"
                         save_copy_trade(trade)
 
                     # Update last_sig in config
