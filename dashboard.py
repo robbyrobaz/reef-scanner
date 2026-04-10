@@ -63,7 +63,8 @@ def load_copy_trades(limit=50):
     if not path.exists():
         return []
     try:
-        header = path.open().readline().strip()
+        with path.open() as fh:
+            header = fh.readline().strip()
         result = subprocess.run(
             ["tail", "-n", str(limit), str(path)],
             capture_output=True, text=True, timeout=5

@@ -288,7 +288,7 @@ async def _execute_signal(
 ) -> None:
     """Execute or paper-record a single copy trade signal."""
     entry = config.copies.get(source_wallet)
-    if not entry:
+    if not entry or not entry.enabled:
         return
 
     scale  = min(1.0, entry.alloc_sol / max(sol_amt, 0.0001))
@@ -350,6 +350,9 @@ async def consensus_processor(paper_positions_ref: Dict) -> None:
         if not config.global_enabled:
             continue
 
+        # Collect signals to fire BEFORE releasing lock — then execute outside the lock
+        # so live RPC calls don't block listeners for 5-30s
+        to_fire = []
         async with _signal_lock:
             for mint in list(_signal_buffer.keys()):
                 signals = _signal_buffer[mint]
@@ -383,11 +386,15 @@ async def consensus_processor(paper_positions_ref: Dict) -> None:
                 n = unique_wallets
                 label = f"consensus/{n}w" if n > 1 else "signal"
                 print(f"  🎯 {label}: {n} wallet(s) → {action} {mint[:16]}...")
-                await _execute_signal(
-                    action, mint, sol_amt, price,
-                    wallet, "", pool_addr,
-                    paper_positions_ref, config, label,
-                )
+                to_fire.append((action, mint, sol_amt, price, wallet, pool_addr, label))
+
+        # Execute outside the lock so RPC calls don't stall listeners
+        for action, mint, sol_amt, price, wallet, pool_addr, label in to_fire:
+            await _execute_signal(
+                action, mint, sol_amt, price,
+                wallet, "", pool_addr,
+                paper_positions_ref, config, label,
+            )
 
 
 def _add_signal(wallet: str, action: str, mint: str, sol_amt: float,
