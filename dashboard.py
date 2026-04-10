@@ -175,24 +175,6 @@ async def get_wallet_stats():
     live = [t for t in trades if t.get("status") == "confirmed"]
     failed = [t for t in trades if t.get("status") == "failed"]
 
-    # ── PAPER stats (simulated, no real money) ──
-    paper_wins = sum(1 for t in paper if _is_profitable(t))
-    paper_pnl = sum(_trade_pnl(t) for t in paper)
-    paper_gains = [t for t in paper if _is_profitable(t)]
-    paper_losses = [t for t in paper if not _is_profitable(t) and _trade_pnl(t) != 0]
-    paper_gain_sum = sum(_trade_pnl(t) for t in paper_gains)
-    paper_loss_sum = sum(_trade_pnl(t) for t in paper_losses)
-
-    # ── LIVE stats (real money) ──
-    live_wins = sum(1 for t in live if _is_profitable(t))
-    live_pnl = sum(_trade_pnl(t) for t in live)
-    live_buys = sum(1 for t in live if t.get("action", "").upper() == "BUY")
-    live_sells = sum(1 for t in live if t.get("action", "").upper() == "SELL")
-    live_gains = [t for t in live if _is_profitable(t)]
-    live_losses = [t for t in live if not _is_profitable(t) and _trade_pnl(t) != 0]
-    live_gain_sum = sum(_trade_pnl(t) for t in live_gains)
-    live_loss_sum = sum(_trade_pnl(t) for t in live_losses)
-
     # ── Real balance P&L (actual SOL change) ──
     starting_balance = 0.18  # SOL sent to hot wallet
     try:
@@ -228,8 +210,8 @@ async def get_wallet_stats():
             "sells": sells,
             "avg_win": (gain_sum / len(gains)) if gains else 0,
             "avg_loss": (loss_sum / len(losses)) if losses else 0,
-            "best": max((_trade_pnl(t) for t in trades_list), default=0),
-            "worst": min((_trade_pnl(t) for t in trades_list), default=0),
+            "best": max((_trade_pnl(t) for t in gains + losses), default=0),
+            "worst": min((_trade_pnl(t) for t in gains + losses), default=0),
         }
 
     return {
