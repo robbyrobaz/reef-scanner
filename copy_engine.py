@@ -92,11 +92,15 @@ def save_paper_positions(positions: Dict[str, dict]) -> None:
     os.makedirs(os.path.dirname(PAPER_POSITIONS_FILE), exist_ok=True)
     PAPER_POSITIONS_FILE.write_text(json.dumps(positions))
 
-def record_paper_trade_pnl(trade: "CopyTrade", positions: Dict[str, dict]) -> float:
+def record_paper_trade_pnl(trade: "CopyTrade", positions: Dict[str, dict]) -> Optional[float]:
+    """
+    Returns realized PnL (SOL) on SELL, 0.0 on BUY (position opened), or None if
+    this SELL has no matching BUY position (caller should skip recording the trade).
+    """
     key = trade.token_mint  # keyed by mint only — any wallet's SELL closes our position
     if trade.action == "BUY":
         if trade.source_price_sol <= 0:
-            return 0.0  # can't open position with unknown price
+            return None  # can't open position with unknown price, skip recording
         positions[key] = {
             "entry_price": trade.source_price_sol,
             "scaled_amount": trade.scaled_amount_sol,
@@ -105,10 +109,14 @@ def record_paper_trade_pnl(trade: "CopyTrade", positions: Dict[str, dict]) -> fl
         return 0.0
     elif trade.action == "SELL" and key in positions:
         if trade.source_price_sol <= 0:
-            return 0.0  # can't compute PnL with unknown exit price
+            return None  # can't compute PnL with unknown exit price, skip recording
         pos = positions.pop(key)
-        return (trade.source_price_sol - pos["entry_price"]) * pos["scaled_amount"]
-    return 0.0
+        # PnL = (exit_price - entry_price) * token_count
+        # token_count = sol_in / entry_price
+        token_count = pos["scaled_amount"] / pos["entry_price"]
+        return (trade.source_price_sol - pos["entry_price"]) * token_count
+    # SELL with no matching BUY — don't record (would inflate trade count with zero-PnL rows)
+    return None
 
 
 # ── Copy Trade Record ─────────────────────────────────────────────────────────
@@ -295,7 +303,12 @@ async def _execute_signal(
     # Re-read trade_mode from config at execution time (belt-and-suspenders safety)
     _live = not DRY_RUN and config.trade_mode == "live"
     if not _live:
-        trade.realized_pnl_sol = record_paper_trade_pnl(trade, paper_positions)
+        pnl = record_paper_trade_pnl(trade, paper_positions)
+        if pnl is None:
+            # No valid position to open/close — skip recording this trade entirely
+            print(f"  ⚪ {tag}PAPER {action} skipped (no price or no matching BUY) → {token_mint[:16]}...")
+            return
+        trade.realized_pnl_sol = pnl
         trade.status = "dry_run"
         pnl_str = f" pnl={trade.realized_pnl_sol:+.6f}" if trade.realized_pnl_sol else ""
         print(f"  🐸 {tag}PAPER {action} {scaled:.4f} SOL → {token_mint[:16]}...{pnl_str}")
