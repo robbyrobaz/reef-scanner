@@ -338,6 +338,9 @@ async def consensus_processor(paper_positions_ref: Dict) -> None:
         now = time.time()
         config = load_copy_config()
 
+        if not config.global_enabled:
+            continue
+
         async with _signal_lock:
             for mint in list(_signal_buffer.keys()):
                 signals = _signal_buffer[mint]

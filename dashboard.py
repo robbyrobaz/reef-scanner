@@ -213,12 +213,15 @@ async def get_wallet_stats():
         gain_sum = sum(_trade_pnl(t) for t in gains)
         loss_sum = sum(_trade_pnl(t) for t in losses)
         n = len(trades_list)
+        # Win rate denominator = closed trades only (SELLs with non-zero PnL)
+        # BUYs always have pnl=0 and would dilute the win rate if included
+        closed = wins + len(losses)
         return {
             "pnl": pnl,
             "trades": n,
             "wins": wins,
             "losses": len(losses),
-            "wr": (wins / n * 100) if n else 0,
+            "wr": (wins / closed * 100) if closed else 0,
             "pf": abs(gain_sum / loss_sum) if loss_sum != 0 else 0,
             "buys": buys,
             "sells": sells,
