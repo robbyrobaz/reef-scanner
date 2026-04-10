@@ -93,8 +93,10 @@ def save_paper_positions(positions: Dict[str, dict]) -> None:
     PAPER_POSITIONS_FILE.write_text(json.dumps(positions))
 
 def record_paper_trade_pnl(trade: "CopyTrade", positions: Dict[str, dict]) -> float:
-    key = f"{trade.source_wallet}:{trade.token_mint}"
+    key = trade.token_mint  # keyed by mint only — any wallet's SELL closes our position
     if trade.action == "BUY":
+        if trade.source_price_sol <= 0:
+            return 0.0  # can't open position with unknown price
         positions[key] = {
             "entry_price": trade.source_price_sol,
             "scaled_amount": trade.scaled_amount_sol,
@@ -102,6 +104,8 @@ def record_paper_trade_pnl(trade: "CopyTrade", positions: Dict[str, dict]) -> fl
         }
         return 0.0
     elif trade.action == "SELL" and key in positions:
+        if trade.source_price_sol <= 0:
+            return 0.0  # can't compute PnL with unknown exit price
         pos = positions.pop(key)
         return (trade.source_price_sol - pos["entry_price"]) * pos["scaled_amount"]
     return 0.0
@@ -542,7 +546,7 @@ async def pumpportal_ws_listener() -> None:
                     trader  = data.get("traderPublicKey", "")
                     mint    = data.get("mint", "")
                     tx_type = data.get("txType", "")
-                    sol_amt = float(data.get("sol", 0) or 0)
+                    sol_amt = float(data.get("sol") or data.get("solAmount") or data.get("sol_amount") or 0)
 
                     if not sig or not trader or not mint or not tx_type:
                         continue
@@ -555,6 +559,13 @@ async def pumpportal_ws_listener() -> None:
                         continue
 
                     action = "BUY" if tx_type == "buy" else "SELL"
+
+                    # Skip BUYs with zero SOL — can't compute price, position would be useless
+                    if action == "BUY" and sol_amt == 0:
+                        print(f"  ⚠️  PumpPortal: skipping BUY with sol=0 for {mint[:16]}...")
+                        _SEEN_SIGS.discard(sig)  # don't dedup — Helius may still pick it up with real price
+                        continue
+
                     tok_amt = float(data.get("tokenAmount", 1) or 1)
                     price   = sol_amt / tok_amt if tok_amt > 0 else 0
 
