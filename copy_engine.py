@@ -24,6 +24,7 @@ import json
 import os
 import sys
 import time
+from collections import deque
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
@@ -67,16 +68,21 @@ MAX_TRADE_AGE_S = int(os.getenv("COPY_MAX_TRADE_AGE_S", "60"))
 
 # ── Shared state ─────────────────────────────────────────────────────────────
 # Dedup: sigs seen by any listener (prevents double-execution across WS + polling)
+# Uses a parallel deque to maintain insertion order for proper FIFO eviction.
+# Evicting random set elements (the naive approach) risks discarding recent sigs,
+# which would cause double-execution in live mode.
 _SEEN_SIGS: set = set()
-_SEEN_SIGS_MAX = 20_000  # cap to prevent unbounded growth in long-running process
+_SEEN_SIGS_QUEUE: deque = deque()
+_SEEN_SIGS_MAX = 20_000
 
 def _seen_add(sig: str) -> None:
+    if sig in _SEEN_SIGS:
+        return
     if len(_SEEN_SIGS) >= _SEEN_SIGS_MAX:
-        # Drop oldest half — safe since sigs older than a few minutes are irrelevant
-        to_remove = list(_SEEN_SIGS)[:_SEEN_SIGS_MAX // 2]
-        for s in to_remove:
-            _SEEN_SIGS.discard(s)
+        old = _SEEN_SIGS_QUEUE.popleft()  # evict oldest, not random
+        _SEEN_SIGS.discard(old)
     _SEEN_SIGS.add(sig)
+    _SEEN_SIGS_QUEUE.append(sig)
 
 # Per-token cooldown: mint → timestamp of last BUY we executed
 _token_cooldown: Dict[str, float] = {}
@@ -364,14 +370,22 @@ async def consensus_processor(paper_positions_ref: Dict) -> None:
                     del _signal_buffer[mint]
                     continue
 
-                # Consensus reached — fire on the most recent signal
-                best = sorted(fresh, key=lambda s: s[1])[-1]
-                wallet, ts, action, sol_amt, pool_addr, price = best
-
-                # Count unique wallets for the SAME action (don't mix BUY+SELL signals)
-                unique_wallets = len(set(s[0] for s in fresh if s[2] == action))
-                if unique_wallets < MIN_WALLETS_CONSENSUS:
+                # Pick action with the most wallet support; break ties toward BUY.
+                # Previously took the most-recent signal's action, which meant 3 BUY
+                # votes could be ignored just because 1 newer SELL failed consensus.
+                buy_wallets  = len(set(s[0] for s in fresh if s[2] == "BUY"))
+                sell_wallets = len(set(s[0] for s in fresh if s[2] == "SELL"))
+                if buy_wallets >= sell_wallets and buy_wallets >= MIN_WALLETS_CONSENSUS:
+                    action = "BUY"
+                elif sell_wallets >= MIN_WALLETS_CONSENSUS:
+                    action = "SELL"
+                else:
                     continue
+                unique_wallets = buy_wallets if action == "BUY" else sell_wallets
+
+                # Pick the most recent signal of the winning action
+                best = sorted((s for s in fresh if s[2] == action), key=lambda s: s[1])[-1]
+                wallet, ts, _, sol_amt, pool_addr, price = best
 
                 # Check cooldown before firing
                 if action == "BUY" and _is_token_on_cooldown(mint):
@@ -402,9 +416,11 @@ def _add_signal(wallet: str, action: str, mint: str, sol_amt: float,
     """Add a raw trade signal to the consensus buffer."""
     if mint not in _signal_buffer:
         _signal_buffer[mint] = []
-    # Avoid duplicate signals from same wallet for same token
-    existing_wallets = {s[0] for s in _signal_buffer[mint]}
-    if wallet in existing_wallets:
+    # Dedup by (wallet, action) — same wallet can have both a BUY and a SELL
+    # buffered for the same mint (quick flip). Deduping by wallet alone silently
+    # drops the SELL when a BUY from the same wallet is already pending.
+    existing = {(s[0], s[2]) for s in _signal_buffer[mint]}
+    if (wallet, action) in existing:
         return
     _signal_buffer[mint].append((wallet, time.time(), action, sol_amt, pool_addr, price))
 
