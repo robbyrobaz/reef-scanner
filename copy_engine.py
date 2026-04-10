@@ -352,13 +352,14 @@ async def consensus_processor(paper_positions_ref: Dict) -> None:
                     del _signal_buffer[mint]
                     continue
 
-                unique_wallets = len(set(s[0] for s in fresh))
-                if unique_wallets < MIN_WALLETS_CONSENSUS:
-                    continue
-
                 # Consensus reached — fire on the most recent signal
                 best = sorted(fresh, key=lambda s: s[1])[-1]
                 wallet, ts, action, sol_amt, pool_addr, price = best
+
+                # Count unique wallets for the SAME action (don't mix BUY+SELL signals)
+                unique_wallets = len(set(s[0] for s in fresh if s[2] == action))
+                if unique_wallets < MIN_WALLETS_CONSENSUS:
+                    continue
 
                 # Check cooldown before firing
                 if action == "BUY" and _is_token_on_cooldown(mint):
@@ -511,12 +512,12 @@ async def _process_helius_sig(sig: str, wallet: str) -> None:
 
     async with _signal_lock:
         for swap in swaps:
+            if swap.price_sol <= 0:
+                continue  # no price = unusable signal regardless of action
             if swap.action == "SELL":
-                # SELLs go directly to consensus buffer (no cooldown on sells)
                 _add_signal(wallet, "SELL", swap.token_mint,
                             swap.amount_sol, swap.pool_address, swap.price_sol)
             else:
-                # BUYs: check cooldown before buffering
                 if not _is_token_on_cooldown(swap.token_mint):
                     _add_signal(wallet, "BUY", swap.token_mint,
                                 swap.amount_sol, swap.pool_address, swap.price_sol)
@@ -576,9 +577,9 @@ async def pumpportal_ws_listener() -> None:
 
                     action = "BUY" if tx_type == "buy" else "SELL"
 
-                    # Skip BUYs with zero SOL — can't compute price, position would be useless
-                    if action == "BUY" and sol_amt == 0:
-                        print(f"  ⚠️  PumpPortal: skipping BUY with sol=0 for {mint[:16]}...")
+                    # Skip zero-SOL signals — can't compute price, position would be useless
+                    if sol_amt == 0:
+                        print(f"  ⚠️  PumpPortal: skipping {action} with sol=0 for {mint[:16]}...")
                         _SEEN_SIGS.discard(sig)  # don't dedup — Helius may still pick it up with real price
                         continue
 
@@ -655,6 +656,8 @@ async def polling_loop(paper_positions: Dict) -> None:
 
                     async with _signal_lock:
                         for swap in swaps:
+                            if swap.price_sol <= 0:
+                                continue  # no price = unusable signal
                             if swap.action == "BUY" and _is_token_on_cooldown(swap.token_mint):
                                 continue
                             _add_signal(wallet_addr, swap.action, swap.token_mint,

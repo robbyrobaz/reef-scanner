@@ -222,7 +222,7 @@ async def get_wallet_stats():
             "wins": wins,
             "losses": len(losses),
             "wr": (wins / closed * 100) if closed else 0,
-            "pf": abs(gain_sum / loss_sum) if loss_sum != 0 else 0,
+            "pf": abs(gain_sum) / abs(loss_sum) if loss_sum != 0 else 0,
             "buys": buys,
             "sells": sells,
             "avg_win": (gain_sum / len(gains)) if gains else 0,
