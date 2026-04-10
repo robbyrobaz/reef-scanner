@@ -68,6 +68,15 @@ MAX_TRADE_AGE_S = int(os.getenv("COPY_MAX_TRADE_AGE_S", "60"))
 # ── Shared state ─────────────────────────────────────────────────────────────
 # Dedup: sigs seen by any listener (prevents double-execution across WS + polling)
 _SEEN_SIGS: set = set()
+_SEEN_SIGS_MAX = 20_000  # cap to prevent unbounded growth in long-running process
+
+def _seen_add(sig: str) -> None:
+    if len(_SEEN_SIGS) >= _SEEN_SIGS_MAX:
+        # Drop oldest half — safe since sigs older than a few minutes are irrelevant
+        to_remove = list(_SEEN_SIGS)[:_SEEN_SIGS_MAX // 2]
+        for s in to_remove:
+            _SEEN_SIGS.discard(s)
+    _SEEN_SIGS.add(sig)
 
 # Per-token cooldown: mint → timestamp of last BUY we executed
 _token_cooldown: Dict[str, float] = {}
@@ -483,7 +492,7 @@ async def helius_logs_listener() -> None:
                     if not any(p in log_str for p in DEX_PROGS):
                         continue
 
-                    _SEEN_SIGS.add(sig)
+                    _seen_add(sig)
 
                     # Fetch + parse asynchronously (don't block the WS read loop)
                     asyncio.create_task(_process_helius_sig(sig, wallet))
@@ -569,7 +578,7 @@ async def pumpportal_ws_listener() -> None:
                         continue
                     if sig in _SEEN_SIGS:
                         continue
-                    _SEEN_SIGS.add(sig)
+                    _seen_add(sig)
 
                     config = load_copy_config()
                     if not config.copies.get(trader) or trader == config.user_wallet:
@@ -638,7 +647,7 @@ async def polling_loop(paper_positions: Dict) -> None:
                     sig = si["signature"]
                     if sig in _SEEN_SIGS:
                         continue
-                    _SEEN_SIGS.add(sig)
+                    _seen_add(sig)
 
                     # Skip stale trades
                     block_time = si.get("blockTime") or 0

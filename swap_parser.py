@@ -223,7 +223,10 @@ def parse_swap_from_transfers(
     else:
         price_sol = 0
 
-    action = "BUY" if sol_transfer.get("mint") == WRAPPED_SOL else "SELL"
+    # BUY = wallet received the token; SELL = wallet sent the token
+    # sol_transfer.mint is always WRAPPED_SOL for SOL-based trades (both directions),
+    # so we can't use that to determine action — use token flow direction instead.
+    action = "BUY" if token_transfer.get("toUserAccount") == wallet else "SELL"
 
     return {
         "token_mint": token_mint,
