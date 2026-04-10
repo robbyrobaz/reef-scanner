@@ -116,6 +116,8 @@ def record_paper_trade_pnl(trade: "CopyTrade", positions: Dict[str, dict]) -> Op
     if trade.action == "BUY":
         if trade.source_price_sol <= 0:
             return None  # can't open position with unknown price, skip recording
+        if key in positions:
+            return None  # position already open — don't overwrite cost basis, skip recording
         positions[key] = {
             "entry_price": trade.source_price_sol,
             "scaled_amount": trade.scaled_amount_sol,
@@ -318,6 +320,7 @@ async def _execute_signal(
     # Re-read trade_mode from config at execution time (belt-and-suspenders safety)
     _live = not DRY_RUN and config.trade_mode == "live"
     if not _live:
+        trade.our_price_sol = price_sol  # paper: assume we'd get the same price as source
         pnl = record_paper_trade_pnl(trade, paper_positions)
         if pnl is None:
             # No valid position to open/close — skip recording this trade entirely
@@ -696,14 +699,17 @@ async def polling_loop(paper_positions: Dict) -> None:
                                         swap.amount_sol, swap.pool_address, swap.price_sol)
                             total += 1
 
-                    if new_sigs:
-                        entry.last_sig = new_sigs[-1]["signature"]
-                        entry.last_copy_ts = int(time.time())
-
                 await asyncio.sleep(0.3)
 
-            if total > 0:
+            # Advance last_sig after processing all sigs for this wallet —
+            # even if none had swaps, so we don't re-fetch them on restart.
+            if new_sigs:
+                entry.last_sig = new_sigs[-1]["signature"]
+                entry.last_copy_ts = int(time.time())
+
+            if total > 0 or new_sigs:
                 save_copy_config(config)
+            if total > 0:
                 print(f"  ✅ {total} signal(s) buffered (polling)")
 
         except Exception as e:

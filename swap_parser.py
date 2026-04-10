@@ -161,22 +161,15 @@ def parse_pumpfun_swap(
                 if delta > token_amount * (10 ** decimals):
                     token_amount = delta / (10 ** decimals)
 
-        # SOL amount: extract from instruction data (first u64 after 8-byte discriminator = base/sol amount)
-        data_str = instruction.get("data", "")
-        decoded = decode_instruction_data(data_str)
-        if decoded and len(decoded) >= 24:
-            # buy:  [8-byte discrim][u64 base_amount_out][u64 max_quote_amount_in]
-            # sell: [8-byte discrim][u64 base_amount_in][u64 min_quote_amount_out]
-            # For buy:  max_quote_amount_in is roughly the SOL to spend
-            # For sell: min_quote_amount_out is roughly the SOL to receive
-            try:
-                val1 = struct.unpack("<Q", decoded[8:16])[0]   # token amount (raw)
-                val2 = struct.unpack("<Q", decoded[16:24])[0]  # SOL amount (lamports, with slippage)
-                sol_amount = val2 / 1e9
-                if sol_amount > 100:  # sanity: >100 SOL is a slippage sentinel, use val1 instead
-                    sol_amount = val1 / 1e9
-            except Exception:
-                pass
+        # SOL amount: use actual native balance delta (pre/post) — instruction data contains
+        # slippage-adjusted ceilings (max_quote_amount_in / min_quote_amount_out), not real amounts.
+        pre_sol = meta.get("preBalances", [])
+        post_sol = meta.get("postBalances", [])
+        if wallet_idx is not None and wallet_idx < len(pre_sol) and wallet_idx < len(post_sol):
+            fee = meta.get("fee", 0) / 1e9
+            raw_delta = (post_sol[wallet_idx] - pre_sol[wallet_idx]) / 1e9
+            sol_amount = abs(raw_delta) - fee
+            sol_amount = max(0.0, sol_amount)
 
         price_sol = (sol_amount / token_amount) if token_amount > 0 and sol_amount > 0 else 0
 
