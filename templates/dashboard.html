@@ -264,10 +264,20 @@
     </div>
 
     <div class="section">
-      <h2>📋 ENABLED COPIES <span id="copy-count" class="sub">(0)</span></h2>
+      <h2>📋 WATCHED WALLETS <span id="copy-count" class="sub">(0)</span></h2>
       <table class="data-table">
-        <thead><tr><th>Address</th><th>Enabled</th><th>Alloc SOL</th><th>Last Sig</th><th>Last Copied</th><th>Actions</th></tr></thead>
-        <tbody id="copy-wallets-body"><tr><td colspan="6" class="loading">Loading…</td></tr></tbody>
+        <thead><tr>
+          <th>Wallet</th>
+          <th>Score</th>
+          <th>Win Rate</th>
+          <th>Trades</th>
+          <th>Avg ROI</th>
+          <th>Avg Hold</th>
+          <th>Alloc</th>
+          <th>On/Off</th>
+          <th></th>
+        </tr></thead>
+        <tbody id="copy-wallets-body"><tr><td colspan="9" class="loading">Loading…</td></tr></tbody>
       </table>
       <div class="add-row" id="add-wallet-row">
         <input type="text" id="add-wallet-addr" placeholder="Solana wallet address (e.g. 7xKX...)">
@@ -554,9 +564,14 @@ async function loadCopyTab() {
   await Promise.all([loadCopyConfig(), loadCopyTrades(), loadCopyStats()]);
 }
 
+let walletStats = [];
+
 async function loadCopyConfig() {
   try {
-    copyConfig = await api('/api/copy/config');
+    [copyConfig, walletStats] = await Promise.all([
+      api('/api/copy/config'),
+      api('/api/copy/wallet-stats'),
+    ]);
     renderWalletStatus();
     renderControls();
     renderCopyWallets();
@@ -641,31 +656,55 @@ async function toggleMode() {
 }
 
 // ── Copy Wallets Table ─────────────────────────────────────────────────────
+function scoreColor(score) {
+  if (score >= 0.82) return 'var(--green)';
+  if (score >= 0.75) return '#e3b341';
+  return 'var(--red)';
+}
+function wrColor(wr) {
+  if (wr >= 0.85) return 'var(--green)';
+  if (wr >= 0.70) return '#e3b341';
+  return 'var(--red)';
+}
+
 function renderCopyWallets() {
   if (!copyConfig) return;
-  const copies = Object.entries(copyConfig.copies || {});
+  const copies = copyConfig.copies || {};
   const body = $('copy-wallets-body');
   const ct = $('copy-count');
-  if (ct) ct.textContent = '(' + copies.length + ')';
+  const count = Object.keys(copies).length;
+  if (ct) ct.textContent = '(' + count + ')';
   if (!body) return;
 
-  if (!copies.length) {
-    body.innerHTML = '<tr><td colspan="6" class="empty">No wallets being copied. Add one below or from Discovery tab.</td></tr>';
+  if (!count) {
+    body.innerHTML = '<tr><td colspan="9" class="empty">No wallets being copied. Add one below.</td></tr>';
     return;
   }
 
-  body.innerHTML = copies.map(([addr, info]) => {
+  // Build lookup from walletStats array
+  const statsMap = {};
+  (walletStats || []).forEach(w => { statsMap[w.address] = w; });
+
+  body.innerHTML = Object.entries(copies).map(([addr, info]) => {
     const enabled = info.enabled !== false;
-    return '<tr>' +
-      '<td class="mono"><a href="https://solscan.io/account/' + addr + '" target="_blank">' + trunc(addr, 16) + '</a></td>' +
-      '<td><span style="color:' + (enabled?'var(--green)':'var(--red)') + '">' + (enabled?'✅ On':'❌ Off') + '</span></td>' +
+    const s = statsMap[addr] || {};
+    const score = s.score || 0;
+    const wr = s.win_rate || 0;
+    const trades = s.total_trades || 0;
+    const roi = s.avg_roi || 0;
+    const hold = s.avg_hold_minutes || 0;
+    const holdStr = hold >= 60 ? (hold/60).toFixed(1)+'h' : Math.round(hold)+'m';
+    const roiStr = roi > 1000 ? (roi/1000).toFixed(1)+'Kx' : roi.toFixed(1)+'x';
+    return '<tr style="opacity:' + (enabled ? '1' : '0.5') + '">' +
+      '<td class="mono"><a href="https://solscan.io/account/' + addr + '" target="_blank" style="color:var(--blue)">' + trunc(addr,16) + '</a></td>' +
+      '<td style="color:' + scoreColor(score) + ';font-weight:700">' + (score ? score.toFixed(3) : '—') + '</td>' +
+      '<td style="color:' + wrColor(wr) + ';font-weight:700">' + (wr ? (wr*100).toFixed(0)+'%' : '—') + '</td>' +
+      '<td style="color:var(--muted)">' + (trades || '—') + '</td>' +
+      '<td style="color:var(--green)">' + (roi ? roiStr : '—') + '</td>' +
+      '<td style="color:var(--muted)">' + (hold ? holdStr : '—') + '</td>' +
       '<td><input type="number" class="alloc-input" value="' + (info.alloc_sol||0.01) + '" step="0.001" min="0.001" onchange="setAlloc(\'' + addr + '\', this.value)"></td>' +
-      '<td class="mono sm">' + trunc(info.last_sig, 14) + '</td>' +
-      '<td class="sm">' + timeAgo(info.last_copy_ts) + '</td>' +
-      '<td>' +
-        '<button class="btn btn-ghost btn-small" onclick="toggleCopyWallet(\'' + addr + '\')">' + (enabled?'Disable':'Enable') + '</button> ' +
-        '<button class="btn btn-danger btn-small" onclick="removeCopyWallet(\'' + addr + '\')">✕ Remove</button>' +
-      '</td>' +
+      '<td><button class="btn btn-ghost btn-small" onclick="toggleCopyWallet(\'' + addr + '\')" style="color:' + (enabled?'var(--green)':'var(--muted)') + '">' + (enabled?'ON':'OFF') + '</button></td>' +
+      '<td><button class="btn btn-danger btn-small" onclick="removeCopyWallet(\'' + addr + '\')">✕</button></td>' +
     '</tr>';
   }).join('');
 }

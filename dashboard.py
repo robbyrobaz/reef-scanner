@@ -90,6 +90,36 @@ def load_wallets_csv(limit=50):
     df = get_top_wallets(limit)
     return df.to_dict("records")
 
+def load_watched_wallet_stats() -> list:
+    """Return scanner stats for every wallet in the copy watch list."""
+    cfg = load_copy_config()
+    copies = cfg.get("copies", {})
+    # Load wallets.csv into a lookup dict
+    wallets_path = DATA_DIR / "wallets.csv"
+    db: dict = {}
+    if wallets_path.exists():
+        with wallets_path.open() as f:
+            for row in csv.DictReader(f):
+                db[row["address"]] = row
+    result = []
+    for addr, entry in copies.items():
+        w = db.get(addr, {})
+        result.append({
+            "address": addr,
+            "enabled": entry.get("enabled", True),
+            "alloc_sol": entry.get("alloc_sol", 0.01),
+            "score": float(w.get("score", 0) or 0),
+            "win_rate": float(w.get("win_rate", 0) or 0),
+            "total_trades": int(w.get("total_trades", 0) or 0),
+            "avg_roi": float(w.get("avg_roi", 0) or 0),
+            "profit_factor": float(w.get("profit_factor", 0) or 0),
+            "avg_hold_minutes": float(w.get("avg_hold_minutes", 0) or 0),
+            "last_active": w.get("last_active", ""),
+            "solscan_link": w.get("solscan_link", f"https://solscan.io/account/{addr}"),
+        })
+    result.sort(key=lambda x: x["score"], reverse=True)
+    return result
+
 def load_swaps_csv(limit=50):
     """Load recent swaps from DuckDB sorted by block_time desc."""
     from db import get_recent_swaps
@@ -310,6 +340,11 @@ async def get_copy_config():
 @app.get("/api/copy/trades")
 async def get_copy_trades(limit: int = 50):
     return load_copy_trades(limit=limit)
+
+# ── API: Watched wallet scanner stats ─────────────────────────────────────────
+@app.get("/api/copy/wallet-stats")
+async def get_copy_wallet_stats():
+    return load_watched_wallet_stats()
 
 # ── API: Toggle wallet copy ────────────────────────────────────────────────────
 @app.post("/api/copy/wallet/{addr}/toggle")
