@@ -50,7 +50,8 @@ async def get_current_slot() -> Optional[int]:
             ) as resp:
                 data = await resp.json()
                 return data.get("result", 0)
-    except:
+    except Exception as e:
+        print(f"❌ get_current_slot failed: {e}", flush=True)
         return None
 
 
@@ -87,7 +88,8 @@ async def get_block_transactions(slot: int) -> List[dict]:
                         tx["blockTime"] = block_time
                     return txs
                 return []
-    except:
+    except Exception as e:
+        print(f"❌ get_block_transactions(slot={slot}) failed: {e}", flush=True)
         return []
 
 
@@ -499,4 +501,12 @@ async def main():
 
 
 if __name__ == "__main__":
-    ranked = asyncio.run(main())
+    import sys as _sys
+    try:
+        ranked = asyncio.run(main())
+    except Exception as _e:
+        print(f"\n❌ Scanner crashed: {_e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        _sys.stdout.flush()
+        _sys.exit(1)

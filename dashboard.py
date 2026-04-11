@@ -127,9 +127,16 @@ def load_swaps_csv(limit=50):
     return df.to_dict("records")
 
 def load_positions():
-    path = DATA_DIR / "positions.json"
+    # Use paper_positions.json (updated by copy_engine); positions.json is for on-chain balances only
+    import json as _json
+    path = DATA_DIR / "paper_positions.json"
     if path.exists():
-        return __import__("json").loads(path.read_text())
+        try:
+            data = _json.loads(path.read_text())
+            # paper_positions is a dict {mint: {entry_price, amount_sol, ...}} — return as list
+            return [{"mint": k, **v} for k, v in data.items()] if isinstance(data, dict) else data
+        except Exception:
+            pass
     return []
 
 # ── Compute stats ──────────────────────────────────────────────────────────────
@@ -244,11 +251,25 @@ async def get_wallet_stats():
             "worst": min((_trade_pnl(t) for t in gains + losses), default=0),
         }
 
+    # Compute last_updated from most recent trade timestamp
+    last_ts = None
+    for t in trades:
+        ts = t.get("timestamp")
+        if ts:
+            try:
+                ts_int = int(ts)
+                if last_ts is None or ts_int > last_ts:
+                    last_ts = ts_int
+            except (ValueError, TypeError):
+                pass
+
     return {
         "paper": _stats(paper),
         "live": _stats(live),
         "failed_trades": len(failed),
         "starting_sol": starting_balance,
+        "last_updated": last_ts,       # Unix timestamp of most recent trade
+        "last_updated_age_s": (int(__import__("time").time()) - last_ts) if last_ts else None,
     }
 
 def _is_profitable(t):

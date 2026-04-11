@@ -485,7 +485,12 @@ async def helius_logs_listener() -> None:
                 print(f"  ✅ Helius logsSubscribe: {len(wallets)} subscriptions sent")
                 delay = 2  # reset backoff
 
-                async for raw in ws:
+                while True:
+                    try:
+                        raw = await asyncio.wait_for(ws.recv(), timeout=300.0)
+                    except asyncio.TimeoutError:
+                        print(f"  ⚠️  Helius WS: no message in 5m — reconnecting")
+                        break
                     try:
                         msg = json.loads(raw)
                     except Exception:
@@ -588,7 +593,12 @@ async def pumpportal_ws_listener() -> None:
                 print(f"  ✅ PumpPortal WS: subscribed")
                 delay = 2
 
-                async for raw in ws:
+                while True:
+                    try:
+                        raw = await asyncio.wait_for(ws.recv(), timeout=300.0)
+                    except asyncio.TimeoutError:
+                        print(f"  ⚠️  PumpPortal WS: no message in 5m — reconnecting")
+                        break
                     try:
                         data = json.loads(raw)
                     except Exception:

@@ -17,6 +17,7 @@ class CopyEntry:
     alloc_sol: float = 0.01
     last_sig: str = ""
     last_copy_ts: int = 0
+    label: str = ""
 
 
 @dataclass
@@ -29,14 +30,18 @@ class CopyConfig:
     copies: Dict[str, CopyEntry] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
+        copies = {}
+        for addr, entry in self.copies.items():
+            d = asdict(entry)
+            if not d.get("label"):
+                d.pop("label", None)  # omit empty label to keep JSON clean
+            copies[addr] = d
         return {
             "user_wallet": self.user_wallet,
             "global_enabled": self.global_enabled,
             "trade_mode": self.trade_mode,
             "keypair_path": self.keypair_path,
-            "copies": {
-                addr: asdict(entry) for addr, entry in self.copies.items()
-            }
+            "copies": copies,
         }
 
     @classmethod
