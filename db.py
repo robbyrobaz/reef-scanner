@@ -7,27 +7,38 @@ import pandas as pd
 DB_PATH = Path(__file__).parent / "data" / "reef.db"
 DATA_DIR = Path(__file__).parent / "data"
 
-def get_db(read_only: bool = True) -> duckdb.DuckDBPyConnection:
-    """Open a fresh read-only DuckDB connection.
+def get_db(read_only: bool = True, retries: int = 8, base_delay: float = 0.5) -> duckdb.DuckDBPyConnection:
+    """Open a DuckDB connection with retry on lock contention.
     No singleton — open/close per call to avoid holding locks.
     Dashboard uses this for reads; scanner uses get_writer_db() for writes.
+    Retries up to `retries` times with exponential backoff (0.5s, 1s, 2s…).
+    Max wait ≈ 63s — covers the full scanner write phase (insert_swaps + save_wallets).
     """
-    return duckdb.connect(str(DB_PATH), read_only=read_only)
+    last_err = None
+    for attempt in range(retries):
+        try:
+            return duckdb.connect(str(DB_PATH), read_only=read_only)
+        except Exception as e:
+            if 'lock' in str(e).lower() and attempt < retries - 1:
+                delay = base_delay * (2 ** attempt)
+                time.sleep(delay)
+                last_err = e
+                continue
+            raise
+    raise last_err  # unreachable but satisfies type checkers
 
 def query_db(sql: str, params: list = None) -> list:
     """Execute a read-only query and return results as dicts. Opens/closes a connection each call — safe for concurrent use."""
-    con = duckdb.connect(str(DB_PATH), read_only=True)
+    con = get_db()  # inherits retry logic
     try:
         if params:
             result = con.execute(sql, params).fetchall()
         else:
             result = con.execute(sql).fetchall()
         cols = [d[0] for d in con.description] if con.description else []
-        con.close()
         return [dict(zip(cols, row)) for row in result]
-    except Exception:
+    finally:
         con.close()
-        raise
 
 def get_writer_db(retries: int = 6, base_delay: float = 1.0) -> duckdb.DuckDBPyConnection:
     """Get a fresh write-capable connection with retry on lock contention.
