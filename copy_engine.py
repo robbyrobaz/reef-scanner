@@ -108,7 +108,9 @@ def load_paper_positions() -> Dict[str, dict]:
 
 def save_paper_positions(positions: Dict[str, dict]) -> None:
     os.makedirs(os.path.dirname(PAPER_POSITIONS_FILE), exist_ok=True)
-    PAPER_POSITIONS_FILE.write_text(json.dumps(positions))
+    tmp = PAPER_POSITIONS_FILE.with_suffix('.tmp')
+    tmp.write_text(json.dumps(positions))
+    tmp.rename(PAPER_POSITIONS_FILE)
 
 def record_paper_trade_pnl(trade: "CopyTrade", positions: Dict[str, dict]) -> Optional[float]:
     """
@@ -710,6 +712,7 @@ async def polling_loop(paper_positions: Dict) -> None:
             enabled = {w: e for w, e in config.copies.items()
                        if e.enabled and w != config.user_wallet}
             total = 0
+            config_changed = False
 
             for wallet_addr, entry in enabled.items():
                 sigs = await get_signatures_for_address(wallet_addr, limit=10)
@@ -757,13 +760,16 @@ async def polling_loop(paper_positions: Dict) -> None:
 
                 await asyncio.sleep(0.3)
 
-            # Advance last_sig after processing all sigs for this wallet —
-            # even if none had swaps, so we don't re-fetch them on restart.
-            if new_sigs:
-                entry.last_sig = new_sigs[-1]["signature"]
-                entry.last_copy_ts = int(time.time())
+                # Advance last_sig after processing all sigs for this wallet —
+                # even if none had swaps, so we don't re-fetch them on restart.
+                # Must be INSIDE the wallet loop — at outer scope only the last
+                # wallet's entry/new_sigs are in scope, breaking all prior wallets.
+                if new_sigs:
+                    entry.last_sig = new_sigs[-1]["signature"]
+                    entry.last_copy_ts = int(time.time())
+                    config_changed = True
 
-            if total > 0 or new_sigs:
+            if config_changed:
                 save_copy_config(config)
             if total > 0:
                 print(f"  ✅ {total} signal(s) buffered (polling)")
