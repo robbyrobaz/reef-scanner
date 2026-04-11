@@ -71,10 +71,12 @@ def load_copy_config() -> CopyConfig:
 
 
 def save_copy_config(config: CopyConfig) -> None:
-    """Save copy config to JSON file"""
+    """Save copy config to JSON file (atomic write via tmp + rename)."""
     os.makedirs(os.path.dirname(COPY_CONFIG_FILE), exist_ok=True)
-    with open(COPY_CONFIG_FILE, "w") as f:
+    tmp = COPY_CONFIG_FILE + ".tmp"
+    with open(tmp, "w") as f:
         json.dump(config.to_dict(), f, indent=2)
+    os.replace(tmp, COPY_CONFIG_FILE)
 
 
 def set_user_wallet(wallet: str) -> CopyConfig:
