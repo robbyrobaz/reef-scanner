@@ -86,27 +86,34 @@ def insert_swaps(swaps: list):
     if not swaps:
         return
     con = get_writer_db()
-    rows = [{
-        "signature":  s.signature,
-        "wallet":     s.wallet,
-        "dex":        s.dex,
-        "token_mint": s.token_mint,
-        "action":     s.action,
-        "amount":     float(s.amount) if s.amount else 0,
-        "amount_sol": float(s.amount_sol) if s.amount_sol else 0,
-        "price_sol":  float(s.price_sol) if s.price_sol else 0,
-        "slot":       s.slot or 0,
-        "block_time": s.block_time or 0,
-        "fee":        s.fee or 0,
-        "solscan_sig": f"https://solscan.io/tx/{s.signature}" if s.signature else "",
-    } for s in swaps]
-    df = pd.DataFrame(rows)
-    con.execute("INSERT OR IGNORE INTO swaps BY NAME SELECT * FROM df")
+    try:
+        rows = [{
+            "signature":  s.signature,
+            "wallet":     s.wallet,
+            "dex":        s.dex,
+            "token_mint": s.token_mint,
+            "action":     s.action,
+            "amount":     float(s.amount) if s.amount else 0,
+            "amount_sol": float(s.amount_sol) if s.amount_sol else 0,
+            "price_sol":  float(s.price_sol) if s.price_sol else 0,
+            "slot":       s.slot or 0,
+            "block_time": s.block_time or 0,
+            "fee":        s.fee or 0,
+            "solscan_sig": f"https://solscan.io/tx/{s.signature}" if s.signature else "",
+        } for s in swaps]
+        df = pd.DataFrame(rows)
+        con.execute("INSERT OR IGNORE INTO swaps BY NAME SELECT * FROM df")
+    finally:
+        con.close()
 
 def get_swaps_df(limit: int = 1000) -> pd.DataFrame:
     """Get recent swaps as DataFrame. Capped to avoid full table scan."""
     cap = min(limit, 5000)
-    return get_db().execute(f"SELECT * FROM swaps ORDER BY block_time DESC LIMIT {cap}").df()
+    con = get_db()
+    try:
+        return con.execute(f"SELECT * FROM swaps ORDER BY block_time DESC LIMIT {cap}").df()
+    finally:
+        con.close()
 
 def get_all_swaps_list(limit: int = 1000000) -> list:
     """Get swaps as list of dicts. Default: all swaps (for scanner recompute)."""
@@ -120,14 +127,22 @@ def get_all_swaps_list(limit: int = 1000000) -> list:
 def get_recent_swaps(limit: int = 50) -> pd.DataFrame:
     """Get most recent swaps (capped for performance)."""
     cap = min(limit, 100)
-    return get_db().execute(
-        f"SELECT signature, wallet, dex, token_mint, action, amount, amount_sol, price_sol, slot, block_time, fee, solscan_sig "
-        f"FROM swaps ORDER BY block_time DESC LIMIT {cap}"
-    ).df()
+    con = get_db()
+    try:
+        return con.execute(
+            f"SELECT signature, wallet, dex, token_mint, action, amount, amount_sol, price_sol, slot, block_time, fee, solscan_sig "
+            f"FROM swaps ORDER BY block_time DESC LIMIT {cap}"
+        ).df()
+    finally:
+        con.close()
 
 def swap_count() -> int:
     """Total number of swaps in DB."""
-    return get_db().execute("SELECT COUNT(*) FROM swaps").fetchone()[0]
+    con = get_db()
+    try:
+        return con.execute("SELECT COUNT(*) FROM swaps").fetchone()[0]
+    finally:
+        con.close()
 
 # ── Wallets ───────────────────────────────────────────────────────────────────
 
@@ -153,59 +168,89 @@ def save_wallets(wallets: list):
         })
     df = pd.DataFrame(rows)
     con = get_writer_db()
-    con.execute("DELETE FROM wallets")
-    con.execute("INSERT INTO wallets SELECT * FROM df")
+    try:
+        con.execute("DELETE FROM wallets")
+        con.execute("INSERT INTO wallets SELECT * FROM df")
+    finally:
+        con.close()
 
 def get_top_wallets(limit: int = 50) -> pd.DataFrame:
     """Top wallets by score (capped for performance)."""
     cap = min(limit, 20)
-    return get_db().execute(
-        f"SELECT address, score, total_trades, win_rate, profit_factor, avg_roi, best_roi, worst_roi, "
-        f"avg_hold_minutes, last_active, favorite_token, solscan_link "
-        f"FROM wallets ORDER BY score DESC LIMIT {cap}"
-    ).df()
+    con = get_db()
+    try:
+        return con.execute(
+            f"SELECT address, score, total_trades, win_rate, profit_factor, avg_roi, best_roi, worst_roi, "
+            f"avg_hold_minutes, last_active, favorite_token, solscan_link "
+            f"FROM wallets ORDER BY score DESC LIMIT {cap}"
+        ).df()
+    finally:
+        con.close()
 
 def get_qualified_wallets(limit: int = 200) -> pd.DataFrame:
     """Qualified wallets (score >= 0.5). Capped for performance."""
     cap = min(limit, 500)
-    return get_db().execute(
-        f"SELECT * FROM wallets WHERE score >= 0.5 ORDER BY score DESC LIMIT {cap}"
-    ).df()
+    con = get_db()
+    try:
+        return con.execute(
+            f"SELECT * FROM wallets WHERE score >= 0.5 ORDER BY score DESC LIMIT {cap}"
+        ).df()
+    finally:
+        con.close()
 
 def wallet_count() -> tuple[int, int]:
     """Returns (total_wallets, qualified_wallets)."""
     con = get_db()
-    total = con.execute("SELECT COUNT(*) FROM wallets").fetchone()[0]
-    qual = con.execute("SELECT COUNT(*) FROM wallets WHERE score >= 0.5").fetchone()[0]
-    return total, qual
+    try:
+        total = con.execute("SELECT COUNT(*) FROM wallets").fetchone()[0]
+        qual = con.execute("SELECT COUNT(*) FROM wallets WHERE score >= 0.5").fetchone()[0]
+        return total, qual
+    finally:
+        con.close()
 
 # ── Dashboard stats ────────────────────────────────────────────────────────────
 
 def get_stats() -> dict:
     """Compute dashboard stats from DuckDB. Uses LIMIT caps + indexes for speed."""
     con = get_db()
+    try:
+        # Fast counts (COUNT with index hint is fast in DuckDB)
+        swap_ct = con.execute("SELECT COUNT(*) FROM swaps").fetchone()[0]
+        buys  = con.execute("SELECT COUNT(*) FROM swaps WHERE action = 'BUY'").fetchone()[0]
+        sells = con.execute("SELECT COUNT(*) FROM swaps WHERE action = 'SELL'").fetchone()[0]
 
-    # Fast counts (COUNT with index hint is fast in DuckDB)
-    swap_ct = con.execute("SELECT COUNT(*) FROM swaps").fetchone()[0]
-    total_w, qual_w = wallet_count()
-    buys  = con.execute("SELECT COUNT(*) FROM swaps WHERE action = 'BUY'").fetchone()[0]
-    sells = con.execute("SELECT COUNT(*) FROM swaps WHERE action = 'SELL'").fetchone()[0]
+        # DEX breakdown (fast with GROUP BY)
+        dex_rows = con.execute(
+            "SELECT dex, COUNT(*) as ct FROM swaps GROUP BY dex ORDER BY ct DESC LIMIT 5"
+        ).fetchall()
+        dex_counts = {dex: ct for dex, ct in dex_rows}
 
-    # DEX breakdown (fast with GROUP BY)
-    dex_rows = con.execute(
-        "SELECT dex, COUNT(*) as ct FROM swaps GROUP BY dex ORDER BY ct DESC LIMIT 5"
-    ).fetchall()
-    dex_counts = {dex: ct for dex, ct in dex_rows}
+        # Last scan time
+        last_st = con.execute("SELECT MAX(block_time) FROM swaps").fetchone()[0] or 0
 
-    # Last scan time
-    last_st = con.execute("SELECT MAX(block_time) FROM swaps").fetchone()[0] or 0
+        # Wallet counts (inline — avoid opening a second connection)
+        total_w = con.execute("SELECT COUNT(*) FROM wallets").fetchone()[0]
+        qual_w  = con.execute("SELECT COUNT(*) FROM wallets WHERE score >= 0.5").fetchone()[0]
 
-    # Top 10 wallets (capped — don't need 50 for the UI table)
-    top_wallets = get_top_wallets(10).to_dict("records")
-    top_wallet = top_wallets[0] if top_wallets else None
+        # Top 10 wallets
+        top_rows = con.execute(
+            "SELECT address, score, total_trades, win_rate, profit_factor, avg_roi, best_roi, worst_roi, "
+            "avg_hold_minutes, last_active, favorite_token, solscan_link "
+            "FROM wallets ORDER BY score DESC LIMIT 10"
+        ).fetchall()
+        cols = [d[0] for d in con.description]
+        top_wallets = [dict(zip(cols, r)) for r in top_rows]
+        top_wallet = top_wallets[0] if top_wallets else None
 
-    # Recent 25 swaps (capped — don't need 50)
-    recent_swaps = get_recent_swaps(25).to_dict("records")
+        # Recent 25 swaps
+        swap_rows = con.execute(
+            "SELECT signature, wallet, dex, token_mint, action, amount, amount_sol, price_sol, slot, block_time, fee, solscan_sig "
+            "FROM swaps ORDER BY block_time DESC LIMIT 25"
+        ).fetchall()
+        swap_cols = [d[0] for d in con.description]
+        recent_swaps = [dict(zip(swap_cols, r)) for r in swap_rows]
+    finally:
+        con.close()
 
     return {
         "total_swaps":      swap_ct,
@@ -227,20 +272,22 @@ def migrate_from_legacy():
     swaps_csv   = DATA_DIR / "swaps.csv"
     wallets_csv = DATA_DIR / "wallets.csv"
     con = get_writer_db()
+    try:
+        if swaps_csv.exists():
+            n = con.execute(f"SELECT COUNT(*) FROM swaps").fetchone()[0]
+            if n == 0:
+                df = pd.read_csv(swaps_csv, parse_dates=["block_time"])
+                df["block_time"] = df["block_time"].astype("int64") // 1_000_000_000
+                con.execute("INSERT INTO swaps SELECT * FROM df")
+                print(f"  Migrated {len(df)} swaps from CSV")
 
-    if swaps_csv.exists():
-        n = con.execute(f"SELECT COUNT(*) FROM swaps").fetchone()[0]
-        if n == 0:
-            df = pd.read_csv(swaps_csv, parse_dates=["block_time"])
-            df["block_time"] = df["block_time"].astype("int64") // 1_000_000_000
-            con.execute("INSERT INTO swaps SELECT * FROM df")
-            print(f"  Migrated {len(df)} swaps from CSV")
+        if wallets_csv.exists():
+            n = con.execute("SELECT COUNT(*) FROM wallets").fetchone()[0]
+            if n == 0:
+                df = pd.read_csv(wallets_csv)
+                con.execute("INSERT INTO wallets SELECT * FROM df")
+                print(f"  Migrated {len(df)} wallets from CSV")
 
-    if wallets_csv.exists():
-        n = con.execute("SELECT COUNT(*) FROM wallets").fetchone()[0]
-        if n == 0:
-            df = pd.read_csv(wallets_csv)
-            con.execute("INSERT INTO wallets SELECT * FROM df")
-            print(f"  Migrated {len(df)} wallets from CSV")
-
-    con.execute("COMMIT")
+        con.execute("COMMIT")
+    finally:
+        con.close()
