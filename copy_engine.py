@@ -66,6 +66,9 @@ CONSENSUS_WINDOW_S    = int(os.getenv("CONSENSUS_WINDOW_S", "15"))  # seconds
 # Skip polling trades older than this (pump tokens die fast — polling is slow fallback)
 MAX_TRADE_AGE_S = int(os.getenv("COPY_MAX_TRADE_AGE_S", "60"))
 
+# Auto-close paper positions that have been open longer than this without a sell signal
+STALE_POSITION_HOURS = float(os.getenv("STALE_POSITION_HOURS", "24"))
+
 # ── Shared state ─────────────────────────────────────────────────────────────
 # Dedup: sigs seen by any listener (prevents double-execution across WS + polling)
 # Uses a parallel deque to maintain insertion order for proper FIFO eviction.
@@ -595,9 +598,9 @@ async def pumpportal_ws_listener() -> None:
 
                 while True:
                     try:
-                        raw = await asyncio.wait_for(ws.recv(), timeout=300.0)
+                        raw = await asyncio.wait_for(ws.recv(), timeout=600.0)
                     except asyncio.TimeoutError:
-                        print(f"  ⚠️  PumpPortal WS: no message in 5m — reconnecting")
+                        print(f"  ⚠️  PumpPortal WS: no message in 10m — reconnecting")
                         break
                     try:
                         data = json.loads(raw)
@@ -648,6 +651,46 @@ async def pumpportal_ws_listener() -> None:
 
 
 # ── Polling Loop ──────────────────────────────────────────────────────────────
+async def cleanup_stale_positions(paper_positions: Dict) -> None:
+    """Auto-expire paper positions open longer than STALE_POSITION_HOURS.
+    Records a SELL at entry_price (0% PnL) since we can't know the real exit price —
+    the source wallet likely sold while we were offline or the token quietly died."""
+    now_unix = int(time.time())
+    stale_mints = [
+        mint for mint, pos in list(paper_positions.items())
+        if now_unix - pos.get("timestamp", now_unix) > STALE_POSITION_HOURS * 3600
+    ]
+    if not stale_mints:
+        return
+
+    print(f"  🧹 Auto-expiring {len(stale_mints)} position(s) open > {STALE_POSITION_HOURS:.0f}h...")
+    config = load_copy_config()
+    for mint in stale_mints:
+        pos = paper_positions.pop(mint, None)
+        if not pos:
+            continue
+        age_h = (now_unix - pos.get("timestamp", now_unix)) / 3600
+        entry_price = pos["entry_price"]
+        trade = CopyTrade(
+            timestamp=now_unix,
+            source_wallet="auto_expire",
+            source_sig="",
+            our_wallet=config.user_wallet,
+            action="SELL",
+            token_mint=mint,
+            amount_sol=pos["scaled_amount"],
+            scaled_amount_sol=pos["scaled_amount"],
+            source_price_sol=entry_price,  # assume flat — no sell signal received
+            our_price_sol=entry_price,
+            status="expired",
+            realized_pnl_sol=0.0,
+        )
+        save_copy_trade(trade)
+        print(f"  🕒 Expired: {mint[:16]}... age={age_h:.0f}h  (0% PnL — no sell signal)")
+
+    save_paper_positions(paper_positions)
+
+
 async def polling_loop(paper_positions: Dict) -> None:
     """
     Fallback polling: checks each watched wallet's recent txs every COPY_ENGINE_INTERVAL_S.
@@ -656,6 +699,9 @@ async def polling_loop(paper_positions: Dict) -> None:
     """
     while True:
         try:
+            # Expire positions that have been open too long without a sell signal
+            await cleanup_stale_positions(paper_positions)
+
             config = load_copy_config()
             if not config.global_enabled:
                 await asyncio.sleep(COPY_ENGINE_INTERVAL_S)
