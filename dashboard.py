@@ -362,6 +362,47 @@ async def get_copy_config():
 async def get_copy_trades(limit: int = 50):
     return load_copy_trades(limit=limit)
 
+# ── API: ROI by 6-hour UTC bucket (all SELL trades) ──────────────────────────
+@app.get("/api/copy/roi-buckets")
+async def get_roi_buckets():
+    """Avg ROI % per 6-hour UTC window, chronological, all closed trades."""
+    from datetime import datetime, timezone
+    path = DATA_DIR / "copy_trades.csv"
+    if not path.exists():
+        return []
+    buckets: dict = {}
+    with path.open() as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            if row.get("action", "").upper() != "SELL":
+                continue
+            pnl_raw = row.get("realized_pnl_sol", "")
+            ts_raw  = row.get("timestamp", "")
+            if not pnl_raw or not ts_raw:
+                continue
+            try:
+                pnl = float(pnl_raw)
+                ts  = int(ts_raw)
+            except (ValueError, TypeError):
+                continue
+            if pnl == 0:
+                continue   # skip zero-PnL (BUY rows that slipped through, expired, etc.)
+            dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+            bucket_h = dt.hour - (dt.hour % 6)
+            key = datetime(dt.year, dt.month, dt.day, bucket_h, tzinfo=timezone.utc).strftime("%Y-%m-%d %H:%M")
+            entry_price  = float(row.get("source_price_sol", 0) or 0)
+            alloc        = float(row.get("scaled_amount_sol", 0.01) or 0.01)
+            # ROI % = pnl / cost_basis * 100
+            cost = alloc if alloc > 0 else 0.01
+            roi_pct = (pnl / cost) * 100
+            if key not in buckets:
+                buckets[key] = []
+            buckets[key].append(roi_pct)
+    return [
+        {"label": k, "avg_roi": round(sum(v) / len(v), 2), "count": len(v)}
+        for k, v in sorted(buckets.items())
+    ]
+
 # ── API: Watched wallet scanner stats ─────────────────────────────────────────
 @app.get("/api/copy/wallet-stats")
 async def get_copy_wallet_stats():
