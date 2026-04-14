@@ -4,9 +4,9 @@ Reef Copy Trading Engine
 Monitors target wallets and copies their trades in real-time.
 
 Detection stack (fastest → slowest):
-  1. Helius logsSubscribe WS — per-wallet, ~200-500ms latency
-  2. PumpPortal WS            — bonding-curve only, milliseconds
-  3. Polling loop             — fallback, ~30s latency
+  1. Solana logsSubscribe WS (public RPC) — per-wallet, ~300-500ms latency
+  2. PumpPortal WS                        — bonding-curve only, milliseconds
+  3. Polling loop (public RPC)            — fallback, every 5s
 
 Signal quality filters:
   • Token cooldown (TOKEN_COOLDOWN_S): don't buy same token twice in 5 min
@@ -33,14 +33,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config import (
     HELIUS_API_KEY,
-    HELIUS_RPC_URL,
     COPY_ENGINE_INTERVAL_S,
     COPY_MIN_ALLOC_SOL,
     COPY_MAX_ALLOC_SOL,
     COPY_TRADES_FILE,
     DATA_DIR,
 )
-from copy_config import load_copy_config, save_copy_config, CopyConfig, CopyEntry
+from copy_config import load_copy_config, save_copy_config, CopyConfig, CopyEntry, config_lock
 from swap_parser import parse_transaction_for_swaps, ParsedSwap
 import websockets
 
@@ -168,27 +167,31 @@ def save_copy_trade(trade: CopyTrade) -> None:
         "scaled_amount_sol", "source_price_sol", "our_price_sol",
         "status", "error", "realized_pnl_sol",
     ]
+    os.makedirs(os.path.dirname(COPY_TRADES_FILE), exist_ok=True)
     file_exists = os.path.exists(COPY_TRADES_FILE)
-    with open(COPY_TRADES_FILE, "a", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fields)
-        if not file_exists:
-            writer.writeheader()
-        writer.writerow({
-            "timestamp": trade.timestamp,
-            "source_wallet": trade.source_wallet,
-            "source_sig": trade.source_sig,
-            "our_wallet": trade.our_wallet,
-            "our_sig": trade.our_sig,
-            "action": trade.action,
-            "token_mint": trade.token_mint,
-            "amount_sol": round(trade.amount_sol, 6),
-            "scaled_amount_sol": round(trade.scaled_amount_sol, 6),
-            "source_price_sol": round(trade.source_price_sol, 9),
-            "our_price_sol": round(trade.our_price_sol, 9),
-            "status": trade.status,
-            "error": str(trade.error)[:200],
-            "realized_pnl_sol": round(trade.realized_pnl_sol, 9),
-        })
+    try:
+        with open(COPY_TRADES_FILE, "a", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fields)
+            if not file_exists:
+                writer.writeheader()
+            writer.writerow({
+                "timestamp": trade.timestamp,
+                "source_wallet": trade.source_wallet,
+                "source_sig": trade.source_sig,
+                "our_wallet": trade.our_wallet,
+                "our_sig": trade.our_sig,
+                "action": trade.action,
+                "token_mint": trade.token_mint,
+                "amount_sol": round(trade.amount_sol, 6),
+                "scaled_amount_sol": round(trade.scaled_amount_sol, 6),
+                "source_price_sol": round(trade.source_price_sol, 9),
+                "our_price_sol": round(trade.our_price_sol, 9),
+                "status": trade.status,
+                "error": str(trade.error)[:200],
+                "realized_pnl_sol": round(trade.realized_pnl_sol, 9),
+            })
+    except OSError as e:
+        print(f"  ⚠️  save_copy_trade failed: {e}")
 
 
 # ── Token cooldown helpers ────────────────────────────────────────────────────
@@ -206,38 +209,28 @@ def _mark_token_bought(mint: str) -> None:
 
 # ── RPC Helpers ───────────────────────────────────────────────────────────────
 async def get_signatures_for_address(address: str, limit: int = 10) -> List[dict]:
-    try:
-        import aiohttp
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                HELIUS_RPC_URL,
-                json={"jsonrpc": "2.0", "id": 1,
-                      "method": "getSignaturesForAddress",
-                      "params": [address, {"commitment": "confirmed", "limit": limit}]},
-                timeout=aiohttp.ClientTimeout(total=15),
-            ) as resp:
-                return (await resp.json()).get("result", [])
-    except Exception as e:
-        print(f"    ⚠️  getSigs error: {e}")
-        return []
+    from rpc_utils import rpc_post
+    data = await rpc_post({
+        "jsonrpc": "2.0", "id": 1,
+        "method": "getSignaturesForAddress",
+        "params": [address, {"commitment": "confirmed", "limit": limit}],
+    })
+    return data.get("result", [])
 
 
 async def get_transaction(sig: str) -> Optional[dict]:
-    try:
-        import aiohttp
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                HELIUS_RPC_URL,
-                json={"jsonrpc": "2.0", "id": 1,
-                      "method": "getTransaction",
-                      "params": [sig, {"encoding": "jsonParsed",
-                                       "maxSupportedTransactionVersion": 0}]},
-                timeout=aiohttp.ClientTimeout(total=15),
-            ) as resp:
-                return (await resp.json()).get("result")
-    except Exception as e:
-        print(f"    ⚠️  getTx error: {e}")
-        return None
+    from rpc_utils import rpc_post
+    # fallthrough_on_null_result=True: if one RPC node hasn't propagated
+    # the tx yet (returns null), try the next one rather than stopping.
+    # commitment=confirmed so it's available ~400ms after processed WS notification.
+    data = await rpc_post({
+        "jsonrpc": "2.0", "id": 1,
+        "method": "getTransaction",
+        "params": [sig, {"encoding": "jsonParsed",
+                         "maxSupportedTransactionVersion": 0,
+                         "commitment": "confirmed"}],
+    }, fallthrough_on_null_result=True)
+    return data.get("result")
 
 
 # ── Swap Execution ────────────────────────────────────────────────────────────
@@ -433,25 +426,38 @@ def _add_signal(wallet: str, action: str, mint: str, sol_amt: float,
     _signal_buffer[mint].append((wallet, time.time(), action, sol_amt, pool_addr, price))
 
 
-# ── Helius logsSubscribe Listener ─────────────────────────────────────────────
+# ── Solana logsSubscribe Listener ─────────────────────────────────────────────
 PUMP_AMM_PROG = "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA"
 JUPITER_PROG  = "JUP6LkbZbjS3jtsKSqf5joF4BSrFEh7WEZg3Xs5ycD1c"
 RAYDIUM_PROG  = "675kPX9MHTjS2zt1qfr1NYHuzeSxPGBY4eNTtRMqDxGD"
 DEX_PROGS     = {PUMP_AMM_PROG, JUPITER_PROG, RAYDIUM_PROG}
 
+# WS endpoint priority: Helius first (best SLA, 1M free credits/month),
+# fall back to public Solana RPC on HTTP 429 (credits exhausted).
+# Format/protocol is identical — both speak standard Solana logsSubscribe.
+def _ws_urls() -> list:
+    urls = []
+    if HELIUS_API_KEY:
+        urls.append(f"wss://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}")
+    urls.append("wss://api.mainnet-beta.solana.com")
+    return urls
+
+
 async def helius_logs_listener() -> None:
     """
-    Subscribe to Helius logsSubscribe for each watched wallet.
-    Fires within ~200-500ms of a transaction landing — far faster than polling.
+    Subscribe to logsSubscribe for each watched wallet.
+    Tries Helius WS first (better SLA); falls back to public Solana RPC
+    automatically when Helius returns HTTP 429 (monthly credits exhausted).
+    Fires within ~300-500ms of a transaction landing.
 
     For each notification:
       1. Check logs mention a known DEX program
-      2. Fetch full transaction (async, non-blocking)
+      2. Fetch full transaction via public RPC (async, non-blocking)
       3. Parse for swaps
       4. Add to consensus buffer
     """
-    WS_URL = f"wss://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
     delay = 2
+    ws_url_index = 0  # start with Helius
 
     while True:
         try:
@@ -462,11 +468,13 @@ async def helius_logs_listener() -> None:
                 await asyncio.sleep(30)
                 continue
 
-            print(f"  🔔 Helius logsSubscribe: connecting ({len(wallets)} wallets)...")
+            urls = _ws_urls()
+            ws_url = urls[ws_url_index % len(urls)]
+            label = "Helius" if "helius" in ws_url else "Solana public"
+            print(f"  🔔 Solana WS ({label}): connecting ({len(wallets)} wallets)...")
             async with websockets.connect(
-                WS_URL,
-                ping_interval=30,
-                ping_timeout=30,
+                ws_url,
+                ping_interval=None,
                 close_timeout=10,
                 max_size=10 * 1024 * 1024,
             ) as ws:
@@ -487,14 +495,15 @@ async def helius_logs_listener() -> None:
                         ],
                     }))
 
-                print(f"  ✅ Helius logsSubscribe: {len(wallets)} subscriptions sent")
-                delay = 2  # reset backoff
+                print(f"  ✅ Solana WS ({label}): {len(wallets)} subscriptions active")
+                delay = 2        # reset backoff on successful connect
+                ws_url_index = 0 # reset to Helius so we retry it after reconnects
 
                 while True:
                     try:
                         raw = await asyncio.wait_for(ws.recv(), timeout=300.0)
                     except asyncio.TimeoutError:
-                        print(f"  ⚠️  Helius WS: no message in 5m — reconnecting")
+                        print(f"  ⚠️  Solana WS: no message in 5m — reconnecting")
                         break
                     try:
                         msg = json.loads(raw)
@@ -534,16 +543,29 @@ async def helius_logs_listener() -> None:
                     asyncio.create_task(_process_helius_sig(sig, wallet))
 
         except (websockets.ConnectionClosed, OSError, ConnectionError) as e:
-            print(f"  ⚠️  Helius WS closed: {e} — reconnect in {delay}s")
+            err_str = str(e)
+            if "429" in err_str and ws_url_index == 0:
+                # Helius credits exhausted — switch to public endpoint immediately
+                ws_url_index = 1
+                print(f"  ⚠️  Helius WS 429 (credits exhausted) — switching to public endpoint")
+                delay = 2  # no backoff needed, it's a planned fallback
+            else:
+                print(f"  ⚠️  Solana WS closed: {e} — reconnect in {delay}s")
         except Exception as e:
-            print(f"  ❌ Helius WS error: {e} — reconnect in {delay}s")
+            err_str = str(e)
+            if "429" in err_str and ws_url_index == 0:
+                ws_url_index = 1
+                print(f"  ⚠️  Helius WS 429 (credits exhausted) — switching to public endpoint")
+                delay = 2
+            else:
+                print(f"  ❌ Solana WS error: {e} — reconnect in {delay}s")
 
         await asyncio.sleep(delay)
         delay = min(delay * 2, 60)
 
 
 async def _process_helius_sig(sig: str, wallet: str) -> None:
-    """Fetch a transaction from Helius and add signals to the consensus buffer."""
+    """Fetch a transaction via public RPC and add signals to the consensus buffer."""
     tx = await get_transaction(sig)
     if not tx:
         return
@@ -567,7 +589,7 @@ async def _process_helius_sig(sig: str, wallet: str) -> None:
                     _add_signal(wallet, "BUY", swap.token_mint,
                                 swap.amount_sol, swap.pool_address, swap.price_sol)
 
-    print(f"  🔔 Helius: {wallet[:16]}... → "
+    print(f"  🔔 WS: {wallet[:16]}... → "
           f"{', '.join(f'{s.action} {s.token_mint[:12]}...' for s in swaps)}")
 
 
@@ -672,7 +694,8 @@ async def cleanup_stale_positions(paper_positions: Dict) -> None:
         if not pos:
             continue
         age_h = (now_unix - pos.get("timestamp", now_unix)) / 3600
-        entry_price = pos["entry_price"]
+        entry_price = pos.get("entry_price", 0.0)
+        scaled = pos.get("scaled_amount", 0.0)
         trade = CopyTrade(
             timestamp=now_unix,
             source_wallet="auto_expire",
@@ -680,8 +703,8 @@ async def cleanup_stale_positions(paper_positions: Dict) -> None:
             our_wallet=config.user_wallet,
             action="SELL",
             token_mint=mint,
-            amount_sol=pos["scaled_amount"],
-            scaled_amount_sol=pos["scaled_amount"],
+            amount_sol=scaled,
+            scaled_amount_sol=scaled,
             source_price_sol=entry_price,  # assume flat — no sell signal received
             our_price_sol=entry_price,
             status="expired",
@@ -728,6 +751,8 @@ async def polling_loop(paper_positions: Dict) -> None:
 
                 new_sigs = list(reversed(new_sigs))
 
+                wallet_signals_before = total  # track swap signals found for THIS wallet
+
                 for si in new_sigs:
                     sig = si["signature"]
                     if sig in _SEEN_SIGS:
@@ -766,11 +791,25 @@ async def polling_loop(paper_positions: Dict) -> None:
                 # wallet's entry/new_sigs are in scope, breaking all prior wallets.
                 if new_sigs:
                     entry.last_sig = new_sigs[-1]["signature"]
-                    entry.last_copy_ts = int(time.time())
                     config_changed = True
+                    # Only update last_copy_ts when we actually found DEX swap signals —
+                    # not just any Solana tx (SOL transfers, NFT mints, etc.).
+                    # last_copy_ts is used by the wallet_rotator to protect "active" wallets
+                    # from rotation; setting it on non-swap activity caused ALL wallets to
+                    # appear permanently active, blocking the rotator from ever firing.
+                    if total > wallet_signals_before:
+                        entry.last_copy_ts = int(time.time())
 
             if config_changed:
-                save_copy_config(config)
+                with config_lock():
+                    # Re-load so we don't overwrite a concurrent rotator write.
+                    # Only the last_sig / last_copy_ts fields are ours to update.
+                    fresh = load_copy_config()
+                    for addr, entry in enabled.items():
+                        if addr in fresh.copies:
+                            fresh.copies[addr].last_sig = entry.last_sig
+                            fresh.copies[addr].last_copy_ts = entry.last_copy_ts
+                    save_copy_config(fresh)
             if total > 0:
                 print(f"  ✅ {total} signal(s) buffered (polling)")
 
@@ -809,8 +848,7 @@ async def run_engine() -> None:
     print(f"   Max trade age:   {MAX_TRADE_AGE_S}s  (env: COPY_MAX_TRADE_AGE_S)")
     print()
 
-    POSITIONS = load_positions()
-    print(f"   Positions loaded: {len(POSITIONS)}")
+    print(f"   Positions: (tracked separately via paper_positions)")
 
     keypair_path = config.keypair_path or str(Path(DATA_DIR) / "keypair.json")
     KEYPAIR_LOADED = await load_solana_keypair(keypair_path)

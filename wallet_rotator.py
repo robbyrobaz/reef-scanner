@@ -27,7 +27,7 @@ import duckdb
 
 BASE_DIR = Path(__file__).parent
 sys.path.insert(0, str(BASE_DIR))
-from copy_config import load_copy_config, save_copy_config, CopyEntry
+from copy_config import load_copy_config, save_copy_config, CopyEntry, config_lock
 
 # ── Tuning ───────────────────────────────────────────────────────────────────
 COPY_ALLOC_SOL       = 0.01   # Simulated position size per buy
@@ -39,6 +39,11 @@ LOOKBACK_DAYS        = 30     # How far back to pull swaps for simulation
 CANDIDATE_POOL       = 300    # DB candidates to simulate before ranking
 PROTECT_COPY_HOURS   = 24     # Don't drop a wallet that copied a trade within this many hours
 DROP_IF_SIM_PNL_BELOW = -0.05 # Always drop if simulated PnL is this negative (chronic loser)
+
+# Live performance override: wallets with enough real copy data and bad live PnL
+# are NEVER protected from rotation, regardless of recency.
+LIVE_OVERRIDE_MIN_TRADES = 8    # Need at least this many completed live round-trips
+LIVE_OVERRIDE_MAX_PNL    = -0.01 # Override protection if live net PnL is below this (SOL)
 MAX_PRICE_SOL        = 5.0    # Skip swaps with price > this (likely parse errors)
 MAX_TRADE_RETURN_X   = 30.0   # Cap any single trade return at 30x — prevents price
                                # parse artifacts from dominating sim (e.g. 1e-10 buy price)
@@ -202,6 +207,40 @@ def get_swaps_batch(con, addresses: List[str], since: int) -> Dict[str, List[dic
 
 # ── Rotation Logic ────────────────────────────────────────────────────────────
 
+def live_pnl_by_wallet() -> Dict[str, dict]:
+    """
+    Read copy_trades.csv and compute live realized PnL + completed trade count
+    per source wallet.  Counts all SELL rows (including 0-PnL expired ones).
+    Note: auto-expired positions are logged under source_wallet="auto_expire",
+    so real wallet stats are not polluted by expiry noise.
+    Returns {address: {"net_pnl": float, "completed": int}}
+    """
+    import csv as _csv
+    trades_file = BASE_DIR / "data" / "copy_trades.csv"
+    result: Dict[str, dict] = {}
+    if not trades_file.exists():
+        return result
+    try:
+        with open(trades_file) as f:
+            for row in _csv.DictReader(f):
+                if row.get("action") != "SELL":
+                    continue
+                try:
+                    pnl = float(row["realized_pnl_sol"])
+                except (ValueError, KeyError):
+                    continue
+                addr = row.get("source_wallet", "")
+                if not addr:
+                    continue
+                if addr not in result:
+                    result[addr] = {"net_pnl": 0.0, "completed": 0}
+                result[addr]["net_pnl"] += pnl
+                result[addr]["completed"] += 1
+    except Exception:
+        pass
+    return result
+
+
 def source_wallets_with_open_positions() -> set:
     """
     Return the set of source wallet addresses that have an open paper position
@@ -255,7 +294,19 @@ def run_rotation(dry_run: bool = False):
         addr for addr, entry in watched.items()
         if entry.last_copy_ts and entry.last_copy_ts >= protect_cutoff
     }
-    protected = open_position_wallets | recent_copy_wallets
+
+    # Live performance override: strip protection from wallets with enough real
+    # data that show chronic losses.  Open-position protection is never overridden
+    # (removing the wallet would orphan the trade permanently).
+    live_stats = live_pnl_by_wallet()
+    live_override = {
+        addr for addr in recent_copy_wallets
+        if addr not in open_position_wallets
+        and live_stats.get(addr, {}).get("completed", 0) >= LIVE_OVERRIDE_MIN_TRADES
+        and live_stats.get(addr, {}).get("net_pnl", 0.0) < LIVE_OVERRIDE_MAX_PNL
+    }
+
+    protected = open_position_wallets | (recent_copy_wallets - live_override)
 
     if open_position_wallets:
         log(f"  {len(open_position_wallets)} wallet(s) protected (open positions): "
@@ -263,6 +314,10 @@ def run_rotation(dry_run: bool = False):
     if recent_copy_wallets:
         log(f"  {len(recent_copy_wallets)} wallet(s) protected (copied within {PROTECT_COPY_HOURS}h): "
             + ", ".join(a[:12] + "..." for a in recent_copy_wallets))
+    if live_override:
+        log(f"  {len(live_override)} wallet(s) protection OVERRIDDEN (bad live PnL ≥{LIVE_OVERRIDE_MIN_TRADES} trades): "
+            + ", ".join(f"{a[:12]}... live={live_stats[a]['net_pnl']:+.4f} SOL ({live_stats[a]['completed']} trades)"
+                        for a in live_override))
 
     # ── Query DB ─────────────────────────────────────────────────────
     log(f"\nQuerying reef.db for up to {CANDIDATE_POOL} candidates...")
@@ -347,7 +402,11 @@ def run_rotation(dry_run: bool = False):
     forced_count = len(forced_drops)
     normal_slots = max(0, MAX_ROTATE_PER_RUN - forced_count)
     to_remove_capped = forced_drops + [a for a in to_remove if a not in forced_drops][:normal_slots]
-    to_add_capped    = to_add[:len(to_remove_capped)]
+
+    # Also fill any empty slots up to MAX_WATCHED (e.g. after a manual removal).
+    # These don't count against MAX_ROTATE_PER_RUN — filling a gap isn't churn.
+    free_slots    = max(0, MAX_WATCHED - len(watched))
+    to_add_capped = to_add[:len(to_remove_capped) + free_slots]
 
     log(f"\n{'─'*60}")
     log(f"Rotation plan:")
@@ -379,7 +438,8 @@ def run_rotation(dry_run: bool = False):
             )
             log(f"  Added   {w['address'][:20]}...  label={label}")
 
-        save_copy_config(config)
+        with config_lock():
+            save_copy_config(config)
         log(f"  Saved copy_config.json  ({len([e for e in config.copies.values() if e.enabled])} active wallets)")
     elif dry_run:
         log(f"\n[DRY RUN] — no changes written. Re-run without --dry-run to apply.")

@@ -15,7 +15,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config import (
     HELIUS_API_KEY,
-    HELIUS_RPC_URL,
     MIN_TRADES,
     MIN_TRADES_30D,
     MIN_WIN_RATE,
@@ -39,58 +38,40 @@ from swap_parser import (
 # ── RPC Helpers ────────────────────────────────────────────────────────
 
 async def get_current_slot() -> Optional[int]:
-    """Get the current finalized slot"""
-    try:
-        import aiohttp
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                HELIUS_RPC_URL,
-                json={"jsonrpc": "2.0", "id": 1, "method": "getSlot", "params": [{"commitment": "finalized"}]},
-                timeout=aiohttp.ClientTimeout(total=10)
-            ) as resp:
-                data = await resp.json()
-                return data.get("result", 0)
-    except Exception as e:
-        print(f"❌ get_current_slot failed: {e}", flush=True)
+    """Get the current finalized slot (falls back to public RPC if Helius is 429)"""
+    from rpc_utils import rpc_post
+    data = await rpc_post(
+        {"jsonrpc": "2.0", "id": 1, "method": "getSlot", "params": [{"commitment": "finalized"}]},
+        timeout=10.0,
+    )
+    result = data.get("result")
+    if result is None:
+        print("❌ get_current_slot failed: no result from any RPC", flush=True)
         return None
+    return result
 
 
 async def get_block_transactions(slot: int) -> List[dict]:
-    """Get all transactions in a block, with blockTime propagated"""
-    try:
-        import aiohttp
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                HELIUS_RPC_URL,
-                json={
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "getBlock",
-                    "params": [
-                        slot,
-                        {
-                            "encoding": "jsonParsed",
-                            "maxSupportedTransactionVersion": 0,
-                            "transactionDetails": "full",
-                            "rewards": False,
-                        }
-                    ]
-                },
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    result = data.get("result", {})
-                    block_time = result.get("blockTime", 0)
-                    txs = result.get("transactions", [])
-                    # Propagate blockTime to each transaction
-                    for tx in txs:
-                        tx["blockTime"] = block_time
-                    return txs
-                return []
-    except Exception as e:
-        print(f"❌ get_block_transactions(slot={slot}) failed: {e}", flush=True)
+    """Get all transactions in a block (falls back to public RPC if Helius is 429)"""
+    from rpc_utils import rpc_post
+    data = await rpc_post({
+        "jsonrpc": "2.0", "id": 1,
+        "method": "getBlock",
+        "params": [slot, {
+            "encoding": "jsonParsed",
+            "maxSupportedTransactionVersion": 0,
+            "transactionDetails": "full",
+            "rewards": False,
+        }],
+    }, timeout=30.0)
+    if not data:
         return []
+    result = data.get("result") or {}
+    block_time = result.get("blockTime", 0)
+    txs = result.get("transactions", [])
+    for tx in txs:
+        tx["blockTime"] = block_time
+    return txs
 
 
 # ── Single-Pass Block Scanner ─────────────────────────────────────────

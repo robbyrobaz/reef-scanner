@@ -2,12 +2,33 @@
 Copy Trading Config — read/write data/copy_config.json
 """
 
+import contextlib
+import fcntl
 import json
 import os
 from dataclasses import dataclass, field, asdict
 from typing import Dict, Optional
 
 from config import COPY_CONFIG_FILE
+
+_LOCK_FILE = COPY_CONFIG_FILE + ".lock"
+
+
+@contextlib.contextmanager
+def config_lock():
+    """
+    Exclusive advisory lock around copy_config.json read-modify-write cycles.
+    Prevents the wallet_rotator cron and the copy_engine polling loop from
+    clobbering each other's writes.  Blocking acquire — typical hold time is
+    under 1 ms so contention is fine.
+    """
+    os.makedirs(os.path.dirname(_LOCK_FILE), exist_ok=True)
+    with open(_LOCK_FILE, "w") as lf:
+        fcntl.flock(lf, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lf, fcntl.LOCK_UN)
 
 
 @dataclass

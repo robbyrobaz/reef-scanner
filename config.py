@@ -82,8 +82,10 @@ WEIGHT_PF = 0.20   # profit factor — heavily weighted
 MIN_PF = 2.0       # minimum profit factor — filters out losing wallets
 
 # ── RPC Fallbacks ─────────────────────────────────────────────────────
+# Used when Helius RPC is rate-limited (HTTP 429).  Tested 2026-04-13.
+# publicnode is listed first: returns getTransaction data ~300ms after a
+# processed WS notification; mainnet-beta sometimes returns null at that point.
 PUBLIC_RPC_ENDPOINTS = [
+    "https://solana.publicnode.com",
     "https://api.mainnet-beta.solana.com",
-    "https://solana-api.projectserum.com",
-    "https://rpc.ankr.com/solana",
 ]
