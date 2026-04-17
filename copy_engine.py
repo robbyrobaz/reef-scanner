@@ -300,7 +300,7 @@ async def execute_copy_trade(trade: CopyTrade) -> bool:
         # Step 1: PumpPortal (bonding curve)
         result = await execute_pumpfun_swap(
             KEYPAIR_LOADED, trade.action.lower(), trade.token_mint,
-            trade.scaled_amount_sol, slippage=15, priority_fee=0.00005, pool="auto",
+            trade.scaled_amount_sol, slippage=15, priority_fee=0.00025, pool="auto",
         )
 
         # Step 2: PumpSwap AMM (graduated tokens)

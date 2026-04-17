@@ -72,7 +72,7 @@ def _buy_sync(keypair: Keypair, pair_address: str, sol_in: float, slippage: int)
         sol_in=sol_in,
         slippage=slippage,
         unit_budget=200_000,
-        unit_price=100_000,
+        unit_price=500_000,
     )
 
 
@@ -87,7 +87,7 @@ def _sell_sync(keypair: Keypair, pair_address: str, percentage: int, slippage: i
         percentage=percentage,
         slippage=slippage,
         unit_budget=200_000,
-        unit_price=100_000,
+        unit_price=500_000,
     )
 
 
