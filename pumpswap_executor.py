@@ -125,23 +125,34 @@ async def execute_pumpswap(
 
     print(f"    🔵 PumpSwap {action.upper()} {token_mint[:16]}... pool={pair[:16]}...")
 
-    # Step 2: execute swap
+    # Step 2: execute swap — retry up to 3 times. Public RPC intermittently
+    # fails on get_account_info (pool keys) and get_token_accounts_by_owner
+    # (creator vault); the SDK silently returns None → aborts. Retrying recovers.
     try:
-        if action.lower() == "buy":
-            ok = await asyncio.wait_for(
-                loop.run_in_executor(None, _buy_sync, keypair, pair, amount_sol, slippage),
-                timeout=60,
-            )
-        else:
-            ok = await asyncio.wait_for(
-                loop.run_in_executor(None, _sell_sync, keypair, pair, 100, slippage),
-                timeout=60,
-            )
+        ok = False
+        last_err = ""
+        for attempt in range(3):
+            if action.lower() == "buy":
+                ok = await asyncio.wait_for(
+                    loop.run_in_executor(None, _buy_sync, keypair, pair, amount_sol, slippage),
+                    timeout=60,
+                )
+            else:
+                ok = await asyncio.wait_for(
+                    loop.run_in_executor(None, _sell_sync, keypair, pair, 100, slippage),
+                    timeout=60,
+                )
+            if ok:
+                break
+            last_err = f"SDK returned False on attempt {attempt+1}/3"
+            if attempt < 2:
+                print(f"    🔁 PumpSwap retry {attempt+1}/3 after silent SDK abort")
+                await asyncio.sleep(1.0)
 
         if ok:
             return PumpSwapResult(success=True, signature="confirmed")
         else:
-            return PumpSwapResult(success=False, error="PumpSwap tx failed or not confirmed")
+            return PumpSwapResult(success=False, error=last_err or "PumpSwap tx failed")
 
     except asyncio.TimeoutError:
         return PumpSwapResult(success=False, error="PumpSwap tx timed out after 60s")
