@@ -366,9 +366,8 @@ async def get_copy_trades(limit: int = 50):
     return load_copy_trades(limit=limit)
 
 # ── API: ROI by 6-hour UTC bucket (all SELL trades) ──────────────────────────
-@app.get("/api/copy/roi-buckets")
-async def get_roi_buckets():
-    """Avg ROI % per 6-hour UTC window, chronological, all closed trades."""
+def _roi_buckets_for(status_filter: set):
+    """Shared logic: avg ROI % per 6-hour UTC window for SELLs matching status_filter."""
     from datetime import datetime, timezone
     path = DATA_DIR / "copy_trades.csv"
     if not path.exists():
@@ -378,6 +377,8 @@ async def get_roi_buckets():
         reader = csv.DictReader(f)
         for row in reader:
             if row.get("action", "").upper() != "SELL":
+                continue
+            if row.get("status") not in status_filter:
                 continue
             pnl_raw = row.get("realized_pnl_sol", "")
             ts_raw  = row.get("timestamp", "")
@@ -389,22 +390,30 @@ async def get_roi_buckets():
             except (ValueError, TypeError):
                 continue
             if pnl == 0:
-                continue   # skip zero-PnL (BUY rows that slipped through, expired, etc.)
+                continue
             dt = datetime.fromtimestamp(ts, tz=timezone.utc)
             bucket_h = dt.hour - (dt.hour % 6)
             key = datetime(dt.year, dt.month, dt.day, bucket_h, tzinfo=timezone.utc).strftime("%Y-%m-%d %H:%M")
-            entry_price  = float(row.get("source_price_sol", 0) or 0)
-            alloc        = float(row.get("scaled_amount_sol", 0.01) or 0.01)
-            # ROI % = pnl / cost_basis * 100
-            cost = alloc if alloc > 0 else 0.01
+            alloc  = float(row.get("scaled_amount_sol", 0.01) or 0.01)
+            cost   = alloc if alloc > 0 else 0.01
             roi_pct = (pnl / cost) * 100
-            if key not in buckets:
-                buckets[key] = []
-            buckets[key].append(roi_pct)
+            buckets.setdefault(key, []).append(roi_pct)
     return [
         {"label": k, "avg_roi": round(sum(v) / len(v), 2), "count": len(v)}
         for k, v in sorted(buckets.items())
     ]
+
+
+@app.get("/api/copy/roi-buckets")
+async def get_roi_buckets():
+    """Avg ROI % per 6-hour UTC window, paper trades (dry_run SELLs)."""
+    return _roi_buckets_for({"dry_run"})
+
+
+@app.get("/api/copy/roi-buckets-live")
+async def get_roi_buckets_live():
+    """Avg ROI % per 6-hour UTC window, live trades (confirmed SELLs only)."""
+    return _roi_buckets_for({"confirmed"})
 
 # ── API: Watched wallet scanner stats ─────────────────────────────────────────
 @app.get("/api/copy/wallet-stats")

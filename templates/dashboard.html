@@ -290,9 +290,16 @@
     </div>
 
     <div class="section">
-      <h2>⏱ AVG ROI % PER 6-HOUR WINDOW UTC</h2>
+      <h2>⏱ PAPER — AVG ROI % PER 6-HOUR WINDOW UTC</h2>
       <div style="position:relative;height:220px;">
         <canvas id="roiBucketChart"></canvas>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>🔴 LIVE — AVG ROI % PER 6-HOUR WINDOW UTC</h2>
+      <div style="position:relative;height:220px;">
+        <canvas id="roiBucketChartLive"></canvas>
       </div>
     </div>
 
@@ -569,7 +576,7 @@ async function addFromDiscovery(addr, btn) {
 let copyConfig = null;
 
 async function loadCopyTab() {
-  await Promise.all([loadCopyConfig(), loadCopyTrades(), loadCopyStats(), loadRoiBucketChart()]);
+  await Promise.all([loadCopyConfig(), loadCopyTrades(), loadCopyStats(), loadRoiBucketChart(), loadRoiBucketChartLive()]);
 }
 
 let walletStats = [];
@@ -965,25 +972,36 @@ function stopLogStream() {
 // ROI BUCKET CHART
 // ══════════════════════════════════════════════════════════════════════════
 let _roiBucketChart = null;
+let _roiBucketChartLive = null;
 
-async function loadRoiBucketChart() {
+async function _renderBucketChart(canvasId, existingChartVarSetter, apiPath) {
   try {
-    const buckets = await api('/api/copy/roi-buckets');
-    if (!buckets || !buckets.length) return;
+    const buckets = await api(apiPath);
+    const ctx = document.getElementById(canvasId);
+    if (!ctx) return null;
+    if (!buckets || !buckets.length) {
+      // Clear and show a small placeholder text
+      const parent = ctx.parentElement;
+      if (parent && !parent.querySelector('.bucket-empty')) {
+        const msg = document.createElement('div');
+        msg.className = 'bucket-empty';
+        msg.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#7d8590;font-size:12px;';
+        msg.textContent = 'No closed trades yet';
+        parent.appendChild(msg);
+      }
+      return null;
+    }
+    // Remove placeholder if data is now available
+    const placeholder = ctx.parentElement && ctx.parentElement.querySelector('.bucket-empty');
+    if (placeholder) placeholder.remove();
 
-    const labels = buckets.map(b => b.label.slice(5, 16)); // "MM-DD HH:MM"
+    const labels = buckets.map(b => b.label.slice(5, 16));
     const values = buckets.map(b => b.avg_roi);
     const counts = buckets.map(b => b.count);
-
     const colors = values.map(v => v >= 0 ? 'rgba(63,185,80,0.75)' : 'rgba(248,81,73,0.75)');
     const borders = values.map(v => v >= 0 ? '#3fb950' : '#f85149');
 
-    const ctx = document.getElementById('roiBucketChart');
-    if (!ctx) return;
-
-    if (_roiBucketChart) { _roiBucketChart.destroy(); _roiBucketChart = null; }
-
-    _roiBucketChart = new Chart(ctx, {
+    return new Chart(ctx, {
       type: 'bar',
       data: {
         labels,
@@ -1055,8 +1073,19 @@ async function loadRoiBucketChart() {
       }
     });
   } catch (e) {
-    console.error('loadRoiBucketChart failed:', e);
+    console.error('bucket chart render failed:', e);
+    return null;
   }
+}
+
+async function loadRoiBucketChart() {
+  if (_roiBucketChart) { _roiBucketChart.destroy(); _roiBucketChart = null; }
+  _roiBucketChart = await _renderBucketChart('roiBucketChart', null, '/api/copy/roi-buckets');
+}
+
+async function loadRoiBucketChartLive() {
+  if (_roiBucketChartLive) { _roiBucketChartLive.destroy(); _roiBucketChartLive = null; }
+  _roiBucketChartLive = await _renderBucketChart('roiBucketChartLive', null, '/api/copy/roi-buckets-live');
 }
 
 document.addEventListener('DOMContentLoaded', function() {

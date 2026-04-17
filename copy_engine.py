@@ -254,6 +254,40 @@ async def get_transaction(sig: str) -> Optional[dict]:
 # ── Swap Execution ────────────────────────────────────────────────────────────
 SOL_MINT = "So11111111111111111111111111111111111111112"
 
+# Public RPC for chain-confirmation polling. PumpPortal and Jupiter return
+# success on RPC-accept (tx submitted, signature issued) which is NOT the same
+# as on-chain confirmation — txs die in mempool all the time. Only PumpSwap SDK
+# confirms internally. Poll ourselves for the other two paths so CSV "confirmed"
+# status matches reality.
+async def _wait_for_confirmation(sig: str, timeout_s: float = 15.0) -> bool:
+    if not sig or sig in ("confirmed", "DRY_RUN", "DRY_RUN_SIG"):
+        return True  # PumpSwap confirms internally; DRY_RUN sentinels pass through
+    import aiohttp
+    rpcs = ["https://solana.publicnode.com", "https://api.mainnet-beta.solana.com"]
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        for rpc in rpcs:
+            try:
+                async with aiohttp.ClientSession() as s:
+                    async with s.post(rpc, json={
+                        "jsonrpc": "2.0", "id": 1,
+                        "method": "getSignatureStatuses",
+                        "params": [[sig], {"searchTransactionHistory": False}],
+                    }, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                        if resp.status != 200:
+                            continue
+                        data = await resp.json()
+                        val = (data.get("result", {}).get("value") or [None])[0]
+                        if val and val.get("confirmationStatus") in ("confirmed", "finalized"):
+                            if val.get("err"):
+                                return False  # tx ran on-chain but errored
+                            return True
+            except Exception:
+                continue
+        await asyncio.sleep(2.0)
+    return False
+
+
 async def execute_copy_trade(trade: CopyTrade) -> bool:
     global KEYPAIR_LOADED
     if KEYPAIR_LOADED is None:
@@ -289,6 +323,14 @@ async def execute_copy_trade(trade: CopyTrade) -> bool:
         if result.success:
             trade.our_sig = result.signature
             trade.our_price_sol = result.price_sol if result.price_sol > 0 else trade.source_price_sol
+            # Chain-confirm for PumpPortal and Jupiter paths — both return success
+            # on RPC accept, not on-chain landing. Without this, "confirmed" status
+            # in the CSV/dashboard is a lie for txs that die in mempool.
+            confirmed = await _wait_for_confirmation(result.signature)
+            if not confirmed:
+                trade.error = "submitted but not confirmed on-chain within 15s"
+                print(f"    ⏳ {trade.action} {trade.token_mint[:16]}... submitted but not confirmed — marking failed")
+                return False
             return True
         trade.error = result.error
         print(f"    ❌ exec failed ({trade.action} {trade.token_mint[:16]}...): {result.error[:180]}")
