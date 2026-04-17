@@ -36,6 +36,8 @@ def load_env():
 
 load_env()
 HELIUS_API_KEY = os.getenv("HELIUS_API_KEY", "")
+# Helius key exhausted Apr 17 — use publicnode for balance/token queries
+RPC_URL = "https://solana.publicnode.com"
 
 # ── FastAPI app ────────────────────────────────────────────────────────────────
 app = FastAPI(title="Reef Scanner + Copy Trading", version="2.0")
@@ -220,14 +222,10 @@ async def get_wallet_stats():
     failed = [t for t in trades if t.get("status") == "failed"]
 
     # ── Real balance P&L (actual SOL change) ──
-    starting_balance = 0.18  # SOL sent to hot wallet
-    try:
-        import aiohttp
-        rpc_url = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
-        # We can't await here easily, so use the cached balance
-        current_balance = None
-    except:
-        current_balance = None
+    # 0.0087 was wallet balance before Apr 17 live flip; 0.2 SOL added → 0.2087 starting live.
+    # Paper-phase activity before Apr 17 didn't move SOL, so this is the live-phase baseline.
+    starting_balance = 0.2087
+    current_balance = None
 
     def _stats(trades_list):
         """Compute stats for a list of trades."""
@@ -296,10 +294,9 @@ async def get_wallet_positions():
         return {"positions": [], "count": 0}
     try:
         import aiohttp
-        rpc_url = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                rpc_url,
+                RPC_URL,
                 json={
                     "jsonrpc": "2.0", "id": 1,
                     "method": "getTokenAccountsByOwner",
@@ -340,10 +337,9 @@ async def get_wallet_balance():
         return {"balance_sol": 0, "address": ""}
     try:
         import aiohttp
-        rpc_url = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                rpc_url,
+                RPC_URL,
                 json={
                     "jsonrpc": "2.0", "id": 1,
                     "method": "getBalance",
@@ -590,9 +586,15 @@ async def log_stream():
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def _save_config(cfg):
+    """Atomic write via tmp+rename under the shared config_lock so we don't
+    race with copy_engine's polling-loop writes or wallet_rotator's nightly run."""
     import json
+    from copy_config import config_lock
     DATA_DIR.mkdir(exist_ok=True)
-    (DATA_DIR / "copy_config.json").write_text(json.dumps(cfg, indent=2))
+    tmp = DATA_DIR / "copy_config.json.tmp"
+    with config_lock():
+        tmp.write_text(json.dumps(cfg, indent=2))
+        tmp.replace(DATA_DIR / "copy_config.json")
 
 if __name__ == "__main__":
     import uvicorn

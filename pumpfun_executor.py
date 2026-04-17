@@ -16,6 +16,9 @@ from typing import Optional
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config import HELIUS_API_KEY, HELIUS_RPC_URL
+# Helius key exhausted Apr 17 — use publicnode as primary RPC for tx submission.
+# Restore to HELIUS_RPC_URL after topping up Helius.
+RPC_URL = "https://solana.publicnode.com"
 from solders.keypair import Keypair
 from solders.transaction import VersionedTransaction
 import aiohttp
@@ -43,7 +46,7 @@ async def execute_pumpfun_swap(
     token_mint: str,
     amount_sol: float,
     slippage: int = 15,
-    priority_fee: float = 0.005,
+    priority_fee: float = 0.00005,
     pool: str = "auto",
 ) -> SwapResult:
     """Execute a swap via PumpPortal. Returns SwapResult."""
@@ -83,7 +86,7 @@ async def execute_pumpfun_swap(
 
             # Step 3: Send via Helius RPC (processed commitment for speed)
             async with session.post(
-                HELIUS_RPC_URL,
+                RPC_URL,
                 json={
                     "jsonrpc": "2.0", "id": 1,
                     "method": "sendTransaction",
@@ -103,7 +106,7 @@ async def execute_pumpfun_swap(
                     data = await resp.json()
                     if "result" in data:
                         sig = data["result"]
-                        print(f"    ✅ {action.upper()} landed: {amount_sol:.4f} SOL | {token_mint[:16]}... | {sig[:20]}...")
+                        print(f"    📤 {action.upper()} submitted: {amount_sol:.4f} SOL | {token_mint[:16]}... | {sig[:20]}...")
                         return SwapResult(success=True, signature=sig, input_amount=amount_sol, dex="pumpfun")
                     elif "error" in data:
                         err = data["error"]

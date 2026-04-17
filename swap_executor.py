@@ -25,6 +25,8 @@ from config import (
     COPY_PRIORITY_FEE_LAMPORTS,
     DATA_DIR,
 )
+# Helius key exhausted Apr 17 — use publicnode as primary RPC for tx submission
+RPC_URL = "https://solana.publicnode.com"
 from solders.keypair import Keypair
 from solders.message import MessageV0
 from solders.transaction import VersionedTransaction
@@ -172,7 +174,7 @@ async def execute_jupiter_swap(
         import aiohttp
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                HELIUS_RPC_URL,
+                RPC_URL,
                 json={
                     "jsonrpc": "2.0",
                     "id": 1,
@@ -313,30 +315,31 @@ async def load_solana_keypair(keypair_path: str = "") -> Optional[Keypair]:
 
 # ── Simpler legacy transaction approach ────────────────────────────────
 async def get_token_balance(wallet: str, token_mint: str) -> int:
-    """Return the raw token balance (in base units) for a wallet, or 0 on failure."""
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                HELIUS_RPC_URL,
-                json={
-                    "jsonrpc": "2.0", "id": 1,
-                    "method": "getTokenAccountsByOwner",
-                    "params": [
-                        wallet,
-                        {"mint": token_mint},
-                        {"encoding": "jsonParsed"},
-                    ],
-                },
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    accounts = data.get("result", {}).get("value", [])
-                    if accounts:
-                        raw = accounts[0]["account"]["data"]["parsed"]["info"]["tokenAmount"]["amount"]
-                        return int(raw)
-    except Exception as e:
-        print(f"    ⚠️  Token balance lookup failed: {e}")
+    """Return the raw token balance (in base units) for a wallet, or 0 on failure.
+    Tries publicnode first, falls back to mainnet-beta — a single timeout would otherwise
+    look like "no balance" and skip a valid sell."""
+    rpcs = [RPC_URL, "https://api.mainnet-beta.solana.com"]
+    payload = {
+        "jsonrpc": "2.0", "id": 1,
+        "method": "getTokenAccountsByOwner",
+        "params": [wallet, {"mint": token_mint}, {"encoding": "jsonParsed"}],
+    }
+    for rpc in rpcs:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(rpc, json=payload,
+                        timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        accounts = data.get("result", {}).get("value", [])
+                        if accounts:
+                            raw = accounts[0]["account"]["data"]["parsed"]["info"]["tokenAmount"]["amount"]
+                            return int(raw)
+                        return 0  # successful query, genuinely zero balance
+        except Exception as e:
+            print(f"    ⚠️  Token balance lookup via {rpc.split('/')[2]} failed: {e} — trying next")
+            continue
+    print(f"    ⚠️  Token balance lookup exhausted all RPCs — assuming 0")
     return 0
 
 
@@ -423,7 +426,7 @@ async def execute_swap_legacy(
             
             # Send
             async with session.post(
-                HELIUS_RPC_URL,
+                RPC_URL,
                 json={
                     "jsonrpc": "2.0",
                     "id": 1,

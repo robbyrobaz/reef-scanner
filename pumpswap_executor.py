@@ -22,6 +22,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import HELIUS_RPC_URL
 from solders.keypair import Keypair
 
+# Helius key exhausted Apr 17 — use publicnode as primary RPC
+RPC_URL = "https://solana.publicnode.com"
+
 DRY_RUN = True
 
 # Cache pool addresses: mint → pair_address (avoid repeated getProgramAccounts calls)
@@ -39,7 +42,7 @@ class PumpSwapResult:
 def _get_sync_client():
     """Build a synchronous solana.rpc.api.Client using the Helius RPC URL."""
     from solana.rpc.api import Client
-    return Client(HELIUS_RPC_URL)
+    return Client(RPC_URL)
 
 
 def _find_pool_sync(mint: str) -> Optional[str]:
@@ -69,7 +72,7 @@ def _buy_sync(keypair: Keypair, pair_address: str, sol_in: float, slippage: int)
         sol_in=sol_in,
         slippage=slippage,
         unit_budget=200_000,
-        unit_price=1_000_000,
+        unit_price=100_000,
     )
 
 
@@ -84,7 +87,7 @@ def _sell_sync(keypair: Keypair, pair_address: str, percentage: int, slippage: i
         percentage=percentage,
         slippage=slippage,
         unit_budget=200_000,
-        unit_price=1_000_000,
+        unit_price=100_000,
     )
 
 

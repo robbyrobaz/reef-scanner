@@ -266,7 +266,7 @@ async def execute_copy_trade(trade: CopyTrade) -> bool:
         # Step 1: PumpPortal (bonding curve)
         result = await execute_pumpfun_swap(
             KEYPAIR_LOADED, trade.action.lower(), trade.token_mint,
-            trade.scaled_amount_sol, slippage=15, priority_fee=0.005, pool="auto",
+            trade.scaled_amount_sol, slippage=15, priority_fee=0.00005, pool="auto",
         )
 
         # Step 2: PumpSwap AMM (graduated tokens)
@@ -291,6 +291,7 @@ async def execute_copy_trade(trade: CopyTrade) -> bool:
             trade.our_price_sol = result.price_sol if result.price_sol > 0 else trade.source_price_sol
             return True
         trade.error = result.error
+        print(f"    ❌ exec failed ({trade.action} {trade.token_mint[:16]}...): {result.error[:180]}")
         return False
     except Exception as e:
         trade.error = str(e)
@@ -353,7 +354,7 @@ async def _execute_signal(
         success = await execute_copy_trade(trade)
         trade.status = "confirmed" if success else "failed"
         if success:
-            print(f"  ✅ {tag}BUY landed: {scaled:.4f} SOL | {token_mint[:16]}... | {trade.our_sig[:20]}...")
+            print(f"  📤 {tag}{action} submitted: {scaled:.4f} SOL | {token_mint[:16]}... | {trade.our_sig[:20]}...")
         save_copy_trade(trade)
 
 
