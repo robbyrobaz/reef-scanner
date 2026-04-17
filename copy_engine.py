@@ -371,6 +371,16 @@ async def _execute_signal(
     tag = f"[{label}] " if label else ""
     # Re-read trade_mode from config at execution time (belt-and-suspenders safety)
     _live = not DRY_RUN and config.trade_mode == "live"
+
+    # Skip live BUY if we're already holding this (source_wallet, mint) position.
+    # The 5-min token cooldown prevents back-to-back BUYs but expires while we
+    # might still hold the first position, causing silent double-buys (saw this
+    # Apr 17 on C7cYcU7: BUY→SELL→BUY→BUY→SELL left 0.01 SOL stuck in tokens).
+    if _live and action == "BUY":
+        pos_key = f"{source_wallet}::{token_mint}"
+        if pos_key in paper_positions:
+            print(f"  ⏭  {tag}LIVE BUY SKIP — already holding {token_mint[:16]}... from this wallet")
+            return
     if not _live:
         trade.our_price_sol = price_sol  # paper: assume we'd get the same price as source
         pnl = record_paper_trade_pnl(trade, paper_positions)
