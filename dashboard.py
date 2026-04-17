@@ -495,11 +495,12 @@ async def get_live_round_trips():
     if not path.exists():
         return {"round_trips": [], "open_positions": [], "running": {}}
 
-    # Read all live-confirmed rows, chronological
+    # Read live rows: confirmed = real tx, expired = auto-expired or ghost-reconciled
+    # (both represent valid close events; expired rows have 0 PnL since exact exit unknown).
     rows = []
     with path.open() as f:
         for r in csv.DictReader(f):
-            if r.get("status") == "confirmed":
+            if r.get("status") in ("confirmed", "expired"):
                 rows.append(r)
     rows.sort(key=lambda r: int(r.get("timestamp", 0) or 0))
 
