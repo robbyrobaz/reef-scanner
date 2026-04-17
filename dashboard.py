@@ -599,25 +599,37 @@ async def get_live_round_trips():
         p["buy_fee_lam"] = b.get("fee") or 0
         p["buy_priority_lam"] = b.get("priority") or 0
 
-    # Running aggregate (gross + net)
-    wins = [c for c in closed if c["pnl_sol"] > 0]
-    losses = [c for c in closed if c["pnl_sol"] < 0]
-    gross_win = sum(c["pnl_sol"] for c in wins)
-    gross_loss = sum(abs(c["pnl_sol"]) for c in losses)
+    # Running aggregates — compute BOTH gross and net views
+    # Gross = trade PnL before fees (matches paper/backtest numbers)
+    # Net   = trade PnL after fees (real money you keep)
+    gross_wins   = [c for c in closed if c["pnl_sol"] > 0]
+    gross_losses = [c for c in closed if c["pnl_sol"] < 0]
+    gross_win_sum  = sum(c["pnl_sol"] for c in gross_wins)
+    gross_loss_sum = sum(abs(c["pnl_sol"]) for c in gross_losses)
+
+    net_wins   = [c for c in closed if c["net_pnl_sol"] > 0]
+    net_losses = [c for c in closed if c["net_pnl_sol"] < 0]
+    net_win_sum  = sum(c["net_pnl_sol"] for c in net_wins)
+    net_loss_sum = sum(abs(c["net_pnl_sol"]) for c in net_losses)
+
     total_fees = sum(c.get("total_fee_sol", 0) for c in closed) + sum(p.get("buy_fee_lam", 0)/1e9 for p in open_list)
     net_pnl_total = sum(c.get("net_pnl_sol", c["pnl_sol"]) for c in closed)
     running = {
         "closed_count": len(closed),
         "open_count": len(open_list),
-        "wins": len(wins),
-        "losses": len(losses),
-        "win_rate": (len(wins) / len(closed) * 100) if closed else 0,
+        "wins": len(gross_wins),        # retain gross win/loss counts for backward compat
+        "losses": len(gross_losses),
+        "wins_net": len(net_wins),
+        "losses_net": len(net_losses),
+        "win_rate": (len(gross_wins) / len(closed) * 100) if closed else 0,
+        "win_rate_net": (len(net_wins) / len(closed) * 100) if closed else 0,
         "gross_pnl_sol": sum(c["pnl_sol"] for c in closed),
         "total_fees_sol": total_fees,
         "net_pnl_sol": net_pnl_total,
-        "profit_factor": (gross_win / gross_loss) if gross_loss > 0 else None,
-        "avg_win_sol": (gross_win / len(wins)) if wins else 0,
-        "avg_loss_sol": -(gross_loss / len(losses)) if losses else 0,
+        "profit_factor": (gross_win_sum / gross_loss_sum) if gross_loss_sum > 0 else None,
+        "profit_factor_net": (net_win_sum / net_loss_sum) if net_loss_sum > 0 else None,
+        "avg_win_sol": (gross_win_sum / len(gross_wins)) if gross_wins else 0,
+        "avg_loss_sol": -(gross_loss_sum / len(gross_losses)) if gross_losses else 0,
         "avg_hold_s": (sum(c["hold_s"] for c in closed) / len(closed)) if closed else 0,
         "avg_fee_per_trip_lam": int(total_fees * 1e9 / max(len(closed), 1)),
     }

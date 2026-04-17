@@ -648,18 +648,21 @@ async function loadLiveTab() {
 }
 
 function renderLiveSummary(r) {
-  const pf = r.profit_factor===null ? '—' : r.profit_factor.toFixed(2);
+  const pfGross = r.profit_factor===null ? '—' : r.profit_factor.toFixed(2);
+  const pfNet   = r.profit_factor_net===null ? '—' : r.profit_factor_net.toFixed(2);
   const cards = [
     ['Net PnL (SOL)',   lvFmtSol(r.net_pnl_sol),   lvCls(r.net_pnl_sol)],
     ['Gross PnL (SOL)', lvFmtSol(r.gross_pnl_sol), lvCls(r.gross_pnl_sol)],
     ['Fees Paid (SOL)', (-r.total_fees_sol).toFixed(6), 'neg'],
-    ['Profit Factor',   pf, (r.profit_factor||0) >= 1 ? 'pos' : 'neg'],
-    ['Win Rate',        r.win_rate.toFixed(1)+'%', r.win_rate >= 50 ? 'pos' : 'neg'],
+    ['PF (Net)',        pfNet, (r.profit_factor_net||0) >= 1 ? 'pos' : 'neg'],
+    ['PF (Gross)',      pfGross, (r.profit_factor||0) >= 1 ? 'pos' : 'neg'],
+    ['Win Rate (Net)',  r.win_rate_net.toFixed(1)+'%', r.win_rate_net >= 50 ? 'pos' : 'neg'],
+    ['Win Rate (Gross)',r.win_rate.toFixed(1)+'%',     r.win_rate >= 50 ? 'pos' : 'neg'],
     ['Closed',          r.closed_count, ''],
     ['Open',            r.open_count, r.open_count ? 'pos' : 'mut'],
-    ['W / L',           `${r.wins}/${r.losses}`, ''],
-    ['Avg Win',         lvFmtSol(r.avg_win_sol),  'pos'],
-    ['Avg Loss',        lvFmtSol(r.avg_loss_sol), 'neg'],
+    ['W / L (Net)',     `${r.wins_net}/${r.losses_net}`, ''],
+    ['Avg Win (Gross)', lvFmtSol(r.avg_win_sol),  'pos'],
+    ['Avg Loss (Gross)',lvFmtSol(r.avg_loss_sol), 'neg'],
     ['Avg Fee/Trip',    r.avg_fee_per_trip_lam.toLocaleString() + ' lam', ''],
     ['Avg Hold',        lvFmtHold(Math.round(r.avg_hold_s)), ''],
   ];
