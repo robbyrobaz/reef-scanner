@@ -355,6 +355,12 @@ async def _execute_signal(
         trade.status = "confirmed" if success else "failed"
         if success:
             print(f"  📤 {tag}{action} submitted: {scaled:.4f} SOL | {token_mint[:16]}... | {trade.our_sig[:20]}...")
+        elif action == "BUY":
+            # Release the cooldown that consensus_processor set pre-execute.
+            # Otherwise a failed BUY locks us out of this mint for 5 min,
+            # causing us to miss valid subsequent BUY signals from other wallets.
+            _token_cooldown.pop(token_mint, None)
+            print(f"    🔓 cooldown released on failed BUY → {token_mint[:16]}...")
         save_copy_trade(trade)
 
 
