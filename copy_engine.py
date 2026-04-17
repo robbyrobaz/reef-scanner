@@ -259,7 +259,7 @@ SOL_MINT = "So11111111111111111111111111111111111111112"
 # as on-chain confirmation — txs die in mempool all the time. Only PumpSwap SDK
 # confirms internally. Poll ourselves for the other two paths so CSV "confirmed"
 # status matches reality.
-async def _wait_for_confirmation(sig: str, timeout_s: float = 15.0) -> bool:
+async def _wait_for_confirmation(sig: str, timeout_s: float = 45.0) -> bool:
     if not sig or sig in ("confirmed", "DRY_RUN", "DRY_RUN_SIG"):
         return True  # PumpSwap confirms internally; DRY_RUN sentinels pass through
     import aiohttp
