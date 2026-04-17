@@ -390,6 +390,16 @@ async def _execute_signal(
         trade.status = "confirmed" if success else "failed"
         if success:
             print(f"  📤 {tag}{action} submitted: {scaled:.4f} SOL | {token_mint[:16]}... | {trade.our_sig[:20]}...")
+            # Track PnL using source's prices as entry/exit proxy. Not perfect
+            # (our fills lag 2-6s vs source) but far better than always reporting
+            # 0 PnL. Uses the same paper_positions structure + composite key.
+            pnl = record_paper_trade_pnl(trade, paper_positions)
+            if pnl is not None:
+                trade.realized_pnl_sol = pnl
+                if pnl:
+                    pnl_str = f" pnl={pnl:+.6f}"
+                    print(f"    💰 {action} closed{pnl_str} SOL")
+                save_paper_positions(paper_positions)
         elif action == "BUY":
             # Release the cooldown that consensus_processor set pre-execute.
             # Otherwise a failed BUY locks us out of this mint for 5 min,
