@@ -238,9 +238,16 @@ async def get_wallet_stats():
         gain_sum = sum(_trade_pnl(t) for t in gains)
         loss_sum = sum(_trade_pnl(t) for t in losses)
         n = len(trades_list)
-        # Win rate denominator = closed trades only (SELLs with non-zero PnL)
-        # BUYs always have pnl=0 and would dilute the win rate if included
         closed = wins + len(losses)
+        # Open positions = BUYs with no matching same-(source,mint) SELL
+        # Composite key prevents cross-wallet cancelation (matches engine semantics)
+        open_keys = {}
+        for t in trades_list:
+            k = f"{t.get('source_wallet','')}::{t.get('token_mint','')}"
+            if t.get("action","").upper() == "BUY":
+                open_keys[k] = True
+            elif t.get("action","").upper() == "SELL":
+                open_keys.pop(k, None)
         return {
             "pnl": pnl,
             "trades": n,
@@ -250,6 +257,7 @@ async def get_wallet_stats():
             "pf": abs(gain_sum) / abs(loss_sum) if loss_sum != 0 else 0,
             "buys": buys,
             "sells": sells,
+            "open": len(open_keys),
             "avg_win": (gain_sum / len(gains)) if gains else 0,
             "avg_loss": (loss_sum / len(losses)) if losses else 0,
             "best": max((_trade_pnl(t) for t in gains + losses), default=0),
@@ -292,41 +300,42 @@ async def get_wallet_positions():
     addr = cfg.get("user_wallet", "")
     if not addr:
         return {"positions": [], "count": 0}
-    try:
-        import aiohttp
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                RPC_URL,
-                json={
-                    "jsonrpc": "2.0", "id": 1,
-                    "method": "getTokenAccountsByOwner",
-                    "params": [
-                        addr,
-                        {"programId": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"},
-                        {"encoding": "jsonParsed"},
-                    ],
-                },
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    accounts = data.get("result", {}).get("value", [])
-                    positions = []
-                    for acc in accounts:
-                        info = acc["account"]["data"]["parsed"]["info"]
-                        amount = int(info["tokenAmount"]["amount"])
-                        if amount > 0:
-                            decimals = info["tokenAmount"]["decimals"]
-                            positions.append({
-                                "mint": info["mint"],
-                                "amount": amount / (10 ** decimals),
-                                "raw": amount,
-                                "decimals": decimals,
-                            })
-                    return {"positions": positions, "count": len(positions)}
-    except Exception:
-        pass
-    return {"positions": [], "count": 0}
+    # Try both SPL Token and Token-2022 programs. Multi-RPC fallback because
+    # publicnode intermittently times out on getTokenAccountsByOwner.
+    rpcs = [RPC_URL, "https://api.mainnet-beta.solana.com"]
+    programs = [
+        "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",  # classic SPL
+        "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",  # Token-2022
+    ]
+    import aiohttp
+    positions = []
+    for prog in programs:
+        for rpc in rpcs:
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(rpc, json={
+                        "jsonrpc": "2.0", "id": 1,
+                        "method": "getTokenAccountsByOwner",
+                        "params": [addr, {"programId": prog}, {"encoding": "jsonParsed"}],
+                    }, timeout=aiohttp.ClientTimeout(total=20)) as resp:
+                        if resp.status != 200:
+                            continue
+                        data = await resp.json()
+                        for acc in data.get("result", {}).get("value", []):
+                            info = acc["account"]["data"]["parsed"]["info"]
+                            amount = int(info["tokenAmount"]["amount"])
+                            if amount > 0:
+                                positions.append({
+                                    "mint": info["mint"],
+                                    "amount": amount / (10 ** info["tokenAmount"]["decimals"]),
+                                    "raw": amount,
+                                    "decimals": info["tokenAmount"]["decimals"],
+                                    "program": "spl" if prog.startswith("Token") else "t22",
+                                })
+                        break  # success for this program — don't try next RPC
+            except Exception:
+                continue
+    return {"positions": positions, "count": len(positions)}
 
 # ── API: Wallet Balance ──────────────────────────────────────────────────────
 @app.get("/api/wallet/balance")

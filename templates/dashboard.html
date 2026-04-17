@@ -823,8 +823,8 @@ async function loadCopyStats() {
     fill('cs-live', s.live||{});
     fill('cs-paper', s.paper||{});
 
-    // Open positions (on-chain token balances)
-    $('cs-live-open').textContent = fmt(p.count||0);
+    // Open positions: engine's live open (CSV BUY-SELL pairs unclosed)
+    $('cs-live-open').textContent = fmt((s.live||{}).open||0);
 
     // Paper avg win (extra stat)
     const aw = Number((s.paper||{}).avg_win||0);
