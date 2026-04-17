@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reef · Live Trades</title>
+<style>
+  :root {
+    --bg:#0d1117; --panel:#161b22; --border:#30363d; --muted:#7d8590;
+    --text:#c9d1d9; --accent:#58a6ff; --green:#3fb950; --red:#f85149;
+    --amber:#d29922;
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,'SF Mono',Menlo,monospace; font-size:13px; padding:16px; }
+  h1 { font-size:20px; margin-bottom:4px; }
+  .sub { color:var(--muted); font-size:11px; margin-bottom:16px; }
+  .sub a { color:var(--accent); text-decoration:none; }
+  .summary { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:8px; background:var(--panel); border:1px solid var(--border); border-radius:6px; padding:12px; margin-bottom:16px; }
+  .s-stat { padding:4px; }
+  .s-val { font-size:18px; font-weight:600; font-variant-numeric:tabular-nums; }
+  .s-lbl { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; margin-top:2px; }
+  .pos { color:var(--green); } .neg { color:var(--red); } .mut { color:var(--muted); }
+  .panel { background:var(--panel); border:1px solid var(--border); border-radius:6px; padding:12px; margin-bottom:16px; }
+  .panel h2 { font-size:13px; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:8px; font-weight:600; }
+  table { width:100%; border-collapse:collapse; font-size:12px; font-variant-numeric:tabular-nums; }
+  th { text-align:left; padding:6px 8px; background:#0d1117; color:var(--muted); font-size:10px; text-transform:uppercase; border-bottom:1px solid var(--border); position:sticky; top:0; }
+  td { padding:6px 8px; border-bottom:1px solid #21262d; }
+  tr:hover td { background:#21262d; }
+  td a { color:var(--accent); text-decoration:none; }
+  td a:hover { text-decoration:underline; }
+  .tick { color:var(--muted); font-size:10px; }
+  .hold-fast { color:var(--green); }
+  .hold-mid { color:var(--amber); }
+  .hold-slow { color:var(--red); }
+  .pill { display:inline-block; padding:2px 6px; border-radius:3px; font-size:10px; font-weight:600; }
+  .pill-open { background:rgba(210,153,34,0.2); color:var(--amber); }
+  .pill-closed { background:rgba(63,185,80,0.15); color:var(--green); }
+  .refresh { float:right; font-size:11px; color:var(--muted); }
+</style>
+</head>
+<body>
+
+<h1>🔴 Reef · Live Trades <span class="refresh" id="refresh">refreshing…</span></h1>
+<p class="sub"><a href="/">← main dashboard</a> · auto-refresh every 10s</p>
+
+<div class="summary" id="summary"></div>
+
+<div class="panel">
+  <h2>📂 Open positions <span id="open-count" class="mut"></span></h2>
+  <table id="open-table">
+    <thead><tr>
+      <th>Opened</th><th>Hold</th><th>Wallet</th><th>Token</th><th>Entry SOL/tkn</th><th>Alloc SOL</th><th>Tx</th>
+    </tr></thead>
+    <tbody><tr><td colspan="7" class="mut">loading…</td></tr></tbody>
+  </table>
+</div>
+
+<div class="panel">
+  <h2>📜 Completed round-trips <span id="closed-count" class="mut"></span> · most recent first</h2>
+  <table id="closed-table">
+    <thead><tr>
+      <th>Closed</th><th>Hold</th><th>Wallet</th><th>Token</th>
+      <th>Entry</th><th>Exit</th><th>Δ %</th>
+      <th>PnL SOL</th><th>PnL %</th><th>R</th>
+      <th>Buy tx</th><th>Sell tx</th>
+    </tr></thead>
+    <tbody><tr><td colspan="12" class="mut">loading…</td></tr></tbody>
+  </table>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const fmtSol = n => (n>=0?'+':'') + n.toFixed(6);
+const fmtPct = n => (n>=0?'+':'') + n.toFixed(2) + '%';
+const fmtR   = n => n===null ? '—' : (n>=0?'+':'') + n.toFixed(2) + 'R';
+const short  = (s, n=8) => s ? (s.slice(0,n) + '…') : '—';
+const solscanTx = s => s ? `<a href="https://solscan.io/tx/${s}" target="_blank">${short(s,8)}</a>` : '—';
+const solscanAddr = s => s ? `<a href="https://solscan.io/account/${s}" target="_blank">${short(s,8)}</a>` : '—';
+
+const fmtHold = secs => {
+  if (secs < 60) return `${secs}s`;
+  if (secs < 3600) return `${Math.floor(secs/60)}m ${secs%60}s`;
+  return `${Math.floor(secs/3600)}h ${Math.floor((secs%3600)/60)}m`;
+};
+const holdClass = secs => secs < 60 ? 'hold-fast' : secs < 600 ? 'hold-mid' : 'hold-slow';
+const cls = n => n > 0 ? 'pos' : n < 0 ? 'neg' : 'mut';
+
+const fmtTs = ts => {
+  const d = new Date(ts * 1000);
+  const pad = n => String(n).padStart(2,'0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+};
+const fmtTsDate = ts => {
+  const d = new Date(ts * 1000);
+  const pad = n => String(n).padStart(2,'0');
+  return `${d.getMonth()+1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+
+function renderSummary(running) {
+  const pfStr = running.profit_factor === null ? '—' : running.profit_factor.toFixed(2);
+  $('summary').innerHTML = [
+    ['Closed PnL SOL', fmtSol(running.total_pnl_sol), cls(running.total_pnl_sol)],
+    ['Win Rate',       running.win_rate.toFixed(1)+'%', running.win_rate >= 50 ? 'pos' : 'neg'],
+    ['Profit Factor',  pfStr, (running.profit_factor||0) >= 1 ? 'pos' : 'neg'],
+    ['Closed',         running.closed_count, ''],
+    ['Open',           running.open_count, running.open_count ? 'pos' : 'mut'],
+    ['W / L',          `${running.wins}/${running.losses}`, ''],
+    ['Avg Win SOL',    fmtSol(running.avg_win_sol), 'pos'],
+    ['Avg Loss SOL',   fmtSol(running.avg_loss_sol), 'neg'],
+    ['Avg Hold',       fmtHold(Math.round(running.avg_hold_s)), ''],
+  ].map(([lbl,val,c]) => `<div class="s-stat"><div class="s-val ${c}">${val}</div><div class="s-lbl">${lbl}</div></div>`).join('');
+}
+
+function renderOpen(positions) {
+  $('open-count').textContent = `(${positions.length})`;
+  const tbody = $('open-table').querySelector('tbody');
+  if (!positions.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="mut">no open positions</td></tr>';
+    return;
+  }
+  tbody.innerHTML = positions.map(p => `
+    <tr>
+      <td>${fmtTsDate(p.buy_ts)}</td>
+      <td class="${holdClass(p.hold_s)}">${fmtHold(p.hold_s)}</td>
+      <td>${solscanAddr(p.source_wallet)}</td>
+      <td>${solscanAddr(p.token_mint)}</td>
+      <td>${p.entry_price.toExponential(3)}</td>
+      <td>${p.alloc_sol.toFixed(4)}</td>
+      <td>${solscanTx(p.buy_sig)}</td>
+    </tr>`).join('');
+}
+
+function renderClosed(trips) {
+  $('closed-count').textContent = `(${trips.length})`;
+  const tbody = $('closed-table').querySelector('tbody');
+  if (!trips.length) {
+    tbody.innerHTML = '<tr><td colspan="12" class="mut">no closed round-trips yet</td></tr>';
+    return;
+  }
+  tbody.innerHTML = trips.map(t => {
+    const priceChange = t.entry_price > 0 ? ((t.exit_price - t.entry_price) / t.entry_price * 100) : 0;
+    return `
+    <tr>
+      <td>${fmtTsDate(t.sell_ts)}</td>
+      <td class="${holdClass(t.hold_s)}">${fmtHold(t.hold_s)}</td>
+      <td>${solscanAddr(t.source_wallet)}</td>
+      <td>${solscanAddr(t.token_mint)}</td>
+      <td>${t.entry_price.toExponential(3)}</td>
+      <td>${t.exit_price.toExponential(3)}</td>
+      <td class="${cls(priceChange)}">${fmtPct(priceChange)}</td>
+      <td class="${cls(t.pnl_sol)}">${fmtSol(t.pnl_sol)}</td>
+      <td class="${cls(t.pnl_pct)}">${fmtPct(t.pnl_pct)}</td>
+      <td class="${cls(t.r_mult||0)}">${fmtR(t.r_mult)}</td>
+      <td>${solscanTx(t.buy_sig)}</td>
+      <td>${solscanTx(t.sell_sig)}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function load() {
+  try {
+    const r = await fetch('/api/live/round-trips');
+    const d = await r.json();
+    renderSummary(d.running);
+    renderOpen(d.open_positions);
+    renderClosed(d.round_trips);
+    $('refresh').textContent = 'updated ' + new Date().toLocaleTimeString();
+  } catch (e) {
+    $('refresh').textContent = 'error: ' + e.message;
+    console.error(e);
+  }
+}
+
+load();
+setInterval(load, 10000);
+</script>
+
+</body>
+</html>

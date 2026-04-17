@@ -424,6 +424,122 @@ async def get_roi_buckets_live():
     """Avg ROI % per 6-hour UTC window, live trades (confirmed SELLs only)."""
     return _roi_buckets_for({"confirmed"})
 
+
+@app.get("/api/live/round-trips")
+async def get_live_round_trips():
+    """
+    Rich live-trade view: match BUY→SELL pairs by (source_wallet, token_mint),
+    compute hold time, entry/exit prices, pnl SOL + %, running R-multiple.
+    Returns most-recent first. Includes still-open BUYs.
+    """
+    path = DATA_DIR / "copy_trades.csv"
+    if not path.exists():
+        return {"round_trips": [], "open_positions": [], "running": {}}
+
+    # Read all live-confirmed rows, chronological
+    rows = []
+    with path.open() as f:
+        for r in csv.DictReader(f):
+            if r.get("status") == "confirmed":
+                rows.append(r)
+    rows.sort(key=lambda r: int(r.get("timestamp", 0) or 0))
+
+    # Walk chronologically: BUY opens a position, SELL closes oldest-open for key.
+    # Using a list per key (not dict) so we don't silently drop orphan positions.
+    from collections import defaultdict, deque
+    opens = defaultdict(deque)
+    closed = []
+    running_loss_sum = 0.0
+    running_loss_count = 0
+    for r in rows:
+        key = f"{r['source_wallet']}::{r['token_mint']}"
+        action = r.get("action", "").upper()
+        try:
+            ts = int(r.get("timestamp", 0) or 0)
+            alloc = float(r.get("scaled_amount_sol", 0) or 0)
+            price = float(r.get("source_price_sol", 0) or 0)
+            pnl = float(r.get("realized_pnl_sol", 0) or 0)
+        except (ValueError, TypeError):
+            continue
+        if action == "BUY":
+            opens[key].append({
+                "buy_ts": ts, "buy_sig": r.get("our_sig", ""),
+                "entry_price": price, "alloc": alloc,
+                "source_wallet": r["source_wallet"],
+                "token_mint": r["token_mint"],
+            })
+        elif action == "SELL" and opens[key]:
+            pos = opens[key].popleft()
+            # Update running avg loss for R-multiple calc (use absolute of negative pnls)
+            if pnl < 0:
+                running_loss_sum += abs(pnl)
+                running_loss_count += 1
+            avg_loss = (running_loss_sum / running_loss_count) if running_loss_count else 0
+            r_mult = (pnl / avg_loss) if avg_loss > 0 else None
+            pct = (pnl / pos["alloc"] * 100) if pos["alloc"] > 0 else 0
+            closed.append({
+                "status": "closed",
+                "buy_ts": pos["buy_ts"],
+                "sell_ts": ts,
+                "hold_s": ts - pos["buy_ts"],
+                "source_wallet": pos["source_wallet"],
+                "token_mint": pos["token_mint"],
+                "entry_price": pos["entry_price"],
+                "exit_price": price,
+                "alloc_sol": pos["alloc"],
+                "pnl_sol": pnl,
+                "pnl_pct": pct,
+                "r_mult": r_mult,
+                "buy_sig": pos["buy_sig"],
+                "sell_sig": r.get("our_sig", ""),
+            })
+
+    # Still-open positions (no matching SELL yet)
+    import time
+    now = int(time.time())
+    open_list = []
+    for key, queue in opens.items():
+        for pos in queue:
+            open_list.append({
+                "status": "open",
+                "buy_ts": pos["buy_ts"],
+                "hold_s": now - pos["buy_ts"],
+                "source_wallet": pos["source_wallet"],
+                "token_mint": pos["token_mint"],
+                "entry_price": pos["entry_price"],
+                "alloc_sol": pos["alloc"],
+                "buy_sig": pos["buy_sig"],
+            })
+    open_list.sort(key=lambda x: x["buy_ts"], reverse=True)
+    closed.sort(key=lambda x: x["sell_ts"], reverse=True)
+
+    # Running aggregate
+    wins = [c for c in closed if c["pnl_sol"] > 0]
+    losses = [c for c in closed if c["pnl_sol"] < 0]
+    gross_win = sum(c["pnl_sol"] for c in wins)
+    gross_loss = sum(abs(c["pnl_sol"]) for c in losses)
+    running = {
+        "closed_count": len(closed),
+        "open_count": len(open_list),
+        "wins": len(wins),
+        "losses": len(losses),
+        "win_rate": (len(wins) / len(closed) * 100) if closed else 0,
+        "total_pnl_sol": sum(c["pnl_sol"] for c in closed),
+        "profit_factor": (gross_win / gross_loss) if gross_loss > 0 else None,
+        "avg_win_sol": (gross_win / len(wins)) if wins else 0,
+        "avg_loss_sol": -(gross_loss / len(losses)) if losses else 0,
+        "avg_hold_s": (sum(c["hold_s"] for c in closed) / len(closed)) if closed else 0,
+    }
+
+    return {"round_trips": closed, "open_positions": open_list, "running": running}
+
+
+@app.get("/live", response_class=HTMLResponse)
+async def live_page(request: Request):
+    """Detailed live-trading view."""
+    tmpl = jinja_env.get_template("live.html")
+    return HTMLResponse(content=tmpl.render())
+
 # ── API: Watched wallet scanner stats ─────────────────────────────────────────
 @app.get("/api/copy/wallet-stats")
 async def get_copy_wallet_stats():
