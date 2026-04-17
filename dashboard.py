@@ -133,8 +133,15 @@ def load_positions():
     if path.exists():
         try:
             data = _json.loads(path.read_text())
-            # paper_positions is a dict {mint: {entry_price, amount_sol, ...}} — return as list
-            return [{"mint": k, **v} for k, v in data.items()] if isinstance(data, dict) else data
+            # Keys are "{source_wallet}::{token_mint}" composite. Prefer embedded token_mint
+            # field; fall back to parsing the key for any entry that predates the migration.
+            if isinstance(data, dict):
+                out = []
+                for k, v in data.items():
+                    mint = v.get("token_mint") or (k.split("::", 1)[1] if "::" in k else k)
+                    out.append({"mint": mint, **v})
+                return out
+            return data
         except Exception:
             pass
     return []

@@ -101,9 +101,22 @@ def load_paper_positions() -> Dict[str, dict]:
     if not PAPER_POSITIONS_FILE.exists():
         return {}
     try:
-        return json.loads(PAPER_POSITIONS_FILE.read_text())
+        data = json.loads(PAPER_POSITIONS_FILE.read_text())
     except Exception:
         return {}
+    # Migrate legacy mint-only keys → composite "legacy::mint" keys with embedded fields.
+    # Legacy entries have keys that are bare mint addresses (no "::"). We don't know which
+    # wallet opened them, so they'll never match an incoming SELL and will auto-expire at 0%.
+    migrated = {}
+    for k, v in data.items():
+        if "::" in k:
+            migrated[k] = v
+        else:
+            v = dict(v)
+            v.setdefault("source_wallet", "legacy")
+            v.setdefault("token_mint", k)
+            migrated[f"legacy::{k}"] = v
+    return migrated
 
 def save_paper_positions(positions: Dict[str, dict]) -> None:
     os.makedirs(os.path.dirname(PAPER_POSITIONS_FILE), exist_ok=True)
@@ -116,13 +129,18 @@ def record_paper_trade_pnl(trade: "CopyTrade", positions: Dict[str, dict]) -> Op
     Returns realized PnL (SOL) on SELL, 0.0 on BUY (position opened), or None if
     this SELL has no matching BUY position (caller should skip recording the trade).
     """
-    key = trade.token_mint  # keyed by mint only — any wallet's SELL closes our position
+    # Composite key (wallet, mint): only the opening wallet's SELL closes its own position.
+    # Prevents cross-wallet PnL contamination where wallet B's unrelated SELL of mint X
+    # was closing wallet A's copy position at B's exit price.
+    key = f"{trade.source_wallet}::{trade.token_mint}"
     if trade.action == "BUY":
         if trade.source_price_sol <= 0:
             return None  # can't open position with unknown price, skip recording
         if key in positions:
-            return None  # position already open — don't overwrite cost basis, skip recording
+            return None  # this wallet already has an open position in this mint
         positions[key] = {
+            "source_wallet": trade.source_wallet,
+            "token_mint": trade.token_mint,
             "entry_price": trade.source_price_sol,
             "scaled_amount": trade.scaled_amount_sol,
             "timestamp": trade.timestamp,
@@ -680,25 +698,27 @@ async def cleanup_stale_positions(paper_positions: Dict) -> None:
     Records a SELL at entry_price (0% PnL) since we can't know the real exit price —
     the source wallet likely sold while we were offline or the token quietly died."""
     now_unix = int(time.time())
-    stale_mints = [
-        mint for mint, pos in list(paper_positions.items())
+    stale_keys = [
+        key for key, pos in list(paper_positions.items())
         if now_unix - pos.get("timestamp", now_unix) > STALE_POSITION_HOURS * 3600
     ]
-    if not stale_mints:
+    if not stale_keys:
         return
 
-    print(f"  🧹 Auto-expiring {len(stale_mints)} position(s) open > {STALE_POSITION_HOURS:.0f}h...")
+    print(f"  🧹 Auto-expiring {len(stale_keys)} position(s) open > {STALE_POSITION_HOURS:.0f}h...")
     config = load_copy_config()
-    for mint in stale_mints:
-        pos = paper_positions.pop(mint, None)
+    for key in stale_keys:
+        pos = paper_positions.pop(key, None)
         if not pos:
             continue
         age_h = (now_unix - pos.get("timestamp", now_unix)) / 3600
         entry_price = pos.get("entry_price", 0.0)
         scaled = pos.get("scaled_amount", 0.0)
+        mint = pos.get("token_mint") or (key.split("::", 1)[1] if "::" in key else key)
+        src_wallet = pos.get("source_wallet") or (key.split("::", 1)[0] if "::" in key else "auto_expire")
         trade = CopyTrade(
             timestamp=now_unix,
-            source_wallet="auto_expire",
+            source_wallet=src_wallet,
             source_sig="",
             our_wallet=config.user_wallet,
             action="SELL",
