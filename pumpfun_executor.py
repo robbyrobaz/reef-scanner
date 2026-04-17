@@ -46,7 +46,7 @@ async def execute_pumpfun_swap(
     token_mint: str,
     amount_sol: float,
     slippage: int = 15,
-    priority_fee: float = 0.00025,
+    priority_fee: float = 0.0,
     pool: str = "auto",
 ) -> SwapResult:
     """Execute a swap via PumpPortal. Returns SwapResult."""
