@@ -399,12 +399,25 @@ async def execute_swap_legacy(
                     return SwapResult(success=False, error=f"Quote error {resp.status}: {body[:150]}")
                 quote = await resp.json()
             
-            # Get swap tx
+            # Dynamic priority fee — Jupiter estimates based on recent block
+            # percentiles for the specific writable accounts in this swap, capped
+            # at maxLamports so small trades can't be eaten alive.
+            # - maxLamports 500k = 0.0005 SOL cap (5% of 0.01 trade, absorbable on PF 3.33)
+            # - global: false → local fee market (better for specific pump-amm pools)
+            # - priorityLevel "high" → ~75th percentile of recent fees
+            # - dynamicComputeUnitLimit → don't overpay compute on unused budget
             swap_payload = {
                 "quoteResponse": quote,
                 "userPublicKey": str(keypair.pubkey()),
                 "wrapAndUnwrapSol": True,
-                "prioritizationFeeLamports": COPY_PRIORITY_FEE_LAMPORTS,
+                "dynamicComputeUnitLimit": True,
+                "prioritizationFeeLamports": {
+                    "priorityLevelWithMaxLamports": {
+                        "maxLamports": 500_000,
+                        "global": False,
+                        "priorityLevel": "high",
+                    }
+                },
             }
             async with session.post(JUPITER_SWAP_API, json=swap_payload, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                 if resp.status != 200:
