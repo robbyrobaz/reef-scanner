@@ -195,6 +195,7 @@
   <nav class="tabs">
     <button class="tab active" data-tab="discovery" onclick="switchTab('discovery')">🔍 Discovery</button>
     <button class="tab" data-tab="copy" onclick="switchTab('copy')">🤝 Copy Trading</button>
+    <button class="tab" data-tab="live" onclick="switchTab('live')">🔴 Live Trades</button>
     <button class="tab" data-tab="log" onclick="switchTab('log')">📡 Engine Log</button>
   </nav>
 
@@ -313,6 +314,37 @@
 
   </section>
 
+  <!-- ===== LIVE TRADES TAB ===== -->
+  <section id="tab-live" class="tab-content">
+    <div class="stats-grid" id="live-summary"></div>
+
+    <div class="section">
+      <h2>📂 OPEN POSITIONS <span class="sub" id="live-open-count"></span></h2>
+      <table class="data-table" id="live-open-table">
+        <thead><tr>
+          <th>Opened</th><th>Hold</th><th>Wallet</th><th>Token</th>
+          <th>Entry (SOL/tkn)</th><th>Alloc SOL</th>
+          <th>Buy fee</th><th>Prio</th><th>Tx</th>
+        </tr></thead>
+        <tbody><tr><td colspan="9" class="loading">loading…</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="section">
+      <h2>📜 COMPLETED ROUND-TRIPS <span class="sub" id="live-closed-count"></span> · most recent first</h2>
+      <table class="data-table" id="live-closed-table">
+        <thead><tr>
+          <th>Closed</th><th>Hold</th><th>Wallet</th><th>Token</th>
+          <th>Entry</th><th>Exit</th><th>Δ %</th>
+          <th>Gross PnL</th><th>PnL %</th><th>R</th>
+          <th>Fees</th><th>Net PnL</th>
+          <th>Buy sig</th><th>Sell sig</th>
+        </tr></thead>
+        <tbody><tr><td colspan="14" class="loading">loading…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
   <!-- ===== ENGINE LOG TAB ===== -->
   <section id="tab-log" class="tab-content">
     <div class="section">
@@ -408,6 +440,7 @@ function switchTab(name) {
   document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === 'tab-' + name));
   if (name === 'discovery') loadDiscovery();
   if (name === 'copy') loadCopyTab();
+  if (name === 'live') loadLiveTab();
   if (name === 'log') initLogStream();
 }
 
@@ -577,6 +610,108 @@ let copyConfig = null;
 
 async function loadCopyTab() {
   await Promise.all([loadCopyConfig(), loadCopyTrades(), loadCopyStats(), loadRoiBucketChart(), loadRoiBucketChartLive()]);
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// LIVE TRADES TAB
+// ══════════════════════════════════════════════════════════════════════════
+const lvFmtSol = n => (n>=0?'+':'') + Number(n).toFixed(6);
+const lvFmtPct = n => (n>=0?'+':'') + Number(n).toFixed(2) + '%';
+const lvFmtR   = n => (n===null||n===undefined) ? '—' : (n>=0?'+':'') + Number(n).toFixed(2) + 'R';
+const lvShort  = (s, n=8) => s ? (s.slice(0,n) + '…') : '—';
+const lvTxLink = s => s ? `<a href="https://solscan.io/tx/${s}" target="_blank" style="color:var(--blue)">${lvShort(s,8)}</a>` : '—';
+const lvAddrLink = s => s ? `<a href="https://solscan.io/account/${s}" target="_blank" style="color:var(--blue)">${lvShort(s,8)}</a>` : '—';
+const lvFmtHold = secs => {
+  if (secs < 60) return `${secs}s`;
+  if (secs < 3600) return `${Math.floor(secs/60)}m ${secs%60}s`;
+  return `${Math.floor(secs/3600)}h ${Math.floor((secs%3600)/60)}m`;
+};
+const lvHoldColor = secs => secs < 60 ? 'var(--green)' : secs < 600 ? 'var(--amber)' : 'var(--red)';
+const lvCls = n => n > 0 ? 'pos' : n < 0 ? 'neg' : 'mut';
+const lvFmtTs = ts => {
+  const d = new Date(ts*1000);
+  const pad = n => String(n).padStart(2,'0');
+  return `${d.getMonth()+1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+};
+const lvFmtLam = n => (n===null||n===undefined) ? '—' : n.toLocaleString() + ' lam';
+
+async function loadLiveTab() {
+  try {
+    const r = await fetch('/api/live/round-trips');
+    const d = await r.json();
+    renderLiveSummary(d.running);
+    renderLiveOpen(d.open_positions);
+    renderLiveClosed(d.round_trips);
+  } catch (e) {
+    console.error('loadLiveTab failed:', e);
+  }
+}
+
+function renderLiveSummary(r) {
+  const pf = r.profit_factor===null ? '—' : r.profit_factor.toFixed(2);
+  const cards = [
+    ['Net PnL (SOL)',   lvFmtSol(r.net_pnl_sol),   lvCls(r.net_pnl_sol)],
+    ['Gross PnL (SOL)', lvFmtSol(r.gross_pnl_sol), lvCls(r.gross_pnl_sol)],
+    ['Fees Paid (SOL)', (-r.total_fees_sol).toFixed(6), 'neg'],
+    ['Profit Factor',   pf, (r.profit_factor||0) >= 1 ? 'pos' : 'neg'],
+    ['Win Rate',        r.win_rate.toFixed(1)+'%', r.win_rate >= 50 ? 'pos' : 'neg'],
+    ['Closed',          r.closed_count, ''],
+    ['Open',            r.open_count, r.open_count ? 'pos' : 'mut'],
+    ['W / L',           `${r.wins}/${r.losses}`, ''],
+    ['Avg Win',         lvFmtSol(r.avg_win_sol),  'pos'],
+    ['Avg Loss',        lvFmtSol(r.avg_loss_sol), 'neg'],
+    ['Avg Fee/Trip',    r.avg_fee_per_trip_lam.toLocaleString() + ' lam', ''],
+    ['Avg Hold',        lvFmtHold(Math.round(r.avg_hold_s)), ''],
+  ];
+  $('live-summary').innerHTML = cards.map(([lbl,val,c]) =>
+    `<div class="stat-card"><div class="stat-value ${c}">${val}</div><div class="stat-label">${lbl}</div></div>`
+  ).join('');
+}
+
+function renderLiveOpen(positions) {
+  $('live-open-count').textContent = `(${positions.length})`;
+  const tbody = $('live-open-table').querySelector('tbody');
+  if (!positions.length) { tbody.innerHTML = '<tr><td colspan="9" class="mut">no open positions</td></tr>'; return; }
+  tbody.innerHTML = positions.map(p => `
+    <tr>
+      <td>${lvFmtTs(p.buy_ts)}</td>
+      <td style="color:${lvHoldColor(p.hold_s)}">${lvFmtHold(p.hold_s)}</td>
+      <td>${lvAddrLink(p.source_wallet)}</td>
+      <td>${lvAddrLink(p.token_mint)}</td>
+      <td>${Number(p.entry_price).toExponential(3)}</td>
+      <td>${Number(p.alloc_sol).toFixed(4)}</td>
+      <td>${lvFmtLam(p.buy_fee_lam)}</td>
+      <td>${lvFmtLam(p.buy_priority_lam)}</td>
+      <td>${lvTxLink(p.buy_sig)}</td>
+    </tr>`).join('');
+}
+
+function renderLiveClosed(trips) {
+  $('live-closed-count').textContent = `(${trips.length})`;
+  const tbody = $('live-closed-table').querySelector('tbody');
+  if (!trips.length) { tbody.innerHTML = '<tr><td colspan="14" class="mut">no closed round-trips yet</td></tr>'; return; }
+  tbody.innerHTML = trips.map(t => {
+    const priceChange = t.entry_price > 0 ? ((t.exit_price - t.entry_price) / t.entry_price * 100) : 0;
+    const feesLam = (t.buy_fee_lam || 0) + (t.sell_fee_lam || 0);
+    return `
+    <tr>
+      <td>${lvFmtTs(t.sell_ts)}</td>
+      <td style="color:${lvHoldColor(t.hold_s)}">${lvFmtHold(t.hold_s)}</td>
+      <td>${lvAddrLink(t.source_wallet)}</td>
+      <td>${lvAddrLink(t.token_mint)}</td>
+      <td>${Number(t.entry_price).toExponential(3)}</td>
+      <td>${Number(t.exit_price).toExponential(3)}</td>
+      <td class="${lvCls(priceChange)}">${lvFmtPct(priceChange)}</td>
+      <td class="${lvCls(t.pnl_sol)}">${lvFmtSol(t.pnl_sol)}</td>
+      <td class="${lvCls(t.pnl_pct)}">${lvFmtPct(t.pnl_pct)}</td>
+      <td class="${lvCls(t.r_mult||0)}">${lvFmtR(t.r_mult)}</td>
+      <td class="mut">${feesLam.toLocaleString()} lam</td>
+      <td class="${lvCls(t.net_pnl_sol)}">${lvFmtSol(t.net_pnl_sol)}</td>
+      <td>${lvTxLink(t.buy_sig)}</td>
+      <td>${lvTxLink(t.sell_sig)}</td>
+    </tr>`;
+  }).join('');
+}
 }
 
 let walletStats = [];
@@ -1103,6 +1238,7 @@ document.addEventListener('DOMContentLoaded', function() {
   setInterval(function() {
     if (currentTab === 'discovery') loadDiscovery();
     if (currentTab === 'copy') loadCopyTab();
+    if (currentTab === 'live') loadLiveTab();
     loadHotWallet();
     loadCopyStats();
   }, 30000);

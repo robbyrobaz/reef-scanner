@@ -425,6 +425,42 @@ async def get_roi_buckets_live():
     return _roi_buckets_for({"confirmed"})
 
 
+_TX_FEE_CACHE: dict = {}  # sig -> {"fee": int, "priority": int, "slot": int, "err": any}
+
+
+async def _fetch_tx_fee(sig: str) -> dict:
+    """Lookup tx fee from chain, cached. Returns {"fee", "priority", "slot", "err"}."""
+    if not sig or sig in ("confirmed", "DRY_RUN", "DRY_RUN_SIG"):
+        return {"fee": 0, "priority": 0, "slot": None, "err": None}
+    if sig in _TX_FEE_CACHE:
+        return _TX_FEE_CACHE[sig]
+    import aiohttp
+    for rpc in ["https://api.mainnet-beta.solana.com", "https://solana.publicnode.com"]:
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.post(rpc, json={
+                    "jsonrpc": "2.0", "id": 1, "method": "getTransaction",
+                    "params": [sig, {"encoding": "json", "maxSupportedTransactionVersion": 0, "commitment": "confirmed"}],
+                }, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    if resp.status != 200:
+                        continue
+                    d = await resp.json()
+                    tx = d.get("result")
+                    if not tx:
+                        continue
+                    meta = tx.get("meta", {})
+                    fee = meta.get("fee", 0)
+                    num_sigs = len(tx.get("transaction", {}).get("signatures", []))
+                    base = 5000 * num_sigs
+                    result = {"fee": fee, "priority": max(0, fee - base),
+                              "slot": tx.get("slot"), "err": meta.get("err")}
+                    _TX_FEE_CACHE[sig] = result
+                    return result
+        except Exception:
+            continue
+    return {"fee": None, "priority": None, "slot": None, "err": None}
+
+
 @app.get("/api/live/round-trips")
 async def get_live_round_trips():
     """
@@ -513,32 +549,59 @@ async def get_live_round_trips():
     open_list.sort(key=lambda x: x["buy_ts"], reverse=True)
     closed.sort(key=lambda x: x["sell_ts"], reverse=True)
 
-    # Running aggregate
+    # Fetch on-chain fees for all sigs in parallel (cached after first lookup)
+    all_sigs = set()
+    for c in closed:
+        if c.get("buy_sig"): all_sigs.add(c["buy_sig"])
+        if c.get("sell_sig"): all_sigs.add(c["sell_sig"])
+    for p in open_list:
+        if p.get("buy_sig"): all_sigs.add(p["buy_sig"])
+    fee_results = await asyncio.gather(*[_fetch_tx_fee(s) for s in all_sigs])
+    fees = dict(zip(all_sigs, fee_results))
+
+    # Attach fee data to each row and compute net PnL
+    for c in closed:
+        b = fees.get(c["buy_sig"]) or {}
+        s = fees.get(c["sell_sig"]) or {}
+        buy_fee = b.get("fee") or 0
+        sell_fee = s.get("fee") or 0
+        c["buy_fee_lam"] = buy_fee
+        c["sell_fee_lam"] = sell_fee
+        c["buy_priority_lam"] = b.get("priority") or 0
+        c["sell_priority_lam"] = s.get("priority") or 0
+        c["total_fee_sol"] = (buy_fee + sell_fee) / 1e9
+        c["net_pnl_sol"] = c["pnl_sol"] - c["total_fee_sol"]
+    for p in open_list:
+        b = fees.get(p["buy_sig"]) or {}
+        p["buy_fee_lam"] = b.get("fee") or 0
+        p["buy_priority_lam"] = b.get("priority") or 0
+
+    # Running aggregate (gross + net)
     wins = [c for c in closed if c["pnl_sol"] > 0]
     losses = [c for c in closed if c["pnl_sol"] < 0]
     gross_win = sum(c["pnl_sol"] for c in wins)
     gross_loss = sum(abs(c["pnl_sol"]) for c in losses)
+    total_fees = sum(c.get("total_fee_sol", 0) for c in closed) + sum(p.get("buy_fee_lam", 0)/1e9 for p in open_list)
+    net_pnl_total = sum(c.get("net_pnl_sol", c["pnl_sol"]) for c in closed)
     running = {
         "closed_count": len(closed),
         "open_count": len(open_list),
         "wins": len(wins),
         "losses": len(losses),
         "win_rate": (len(wins) / len(closed) * 100) if closed else 0,
-        "total_pnl_sol": sum(c["pnl_sol"] for c in closed),
+        "gross_pnl_sol": sum(c["pnl_sol"] for c in closed),
+        "total_fees_sol": total_fees,
+        "net_pnl_sol": net_pnl_total,
         "profit_factor": (gross_win / gross_loss) if gross_loss > 0 else None,
         "avg_win_sol": (gross_win / len(wins)) if wins else 0,
         "avg_loss_sol": -(gross_loss / len(losses)) if losses else 0,
         "avg_hold_s": (sum(c["hold_s"] for c in closed) / len(closed)) if closed else 0,
+        "avg_fee_per_trip_lam": int(total_fees * 1e9 / max(len(closed), 1)),
     }
 
     return {"round_trips": closed, "open_positions": open_list, "running": running}
 
 
-@app.get("/live", response_class=HTMLResponse)
-async def live_page(request: Request):
-    """Detailed live-trading view."""
-    tmpl = jinja_env.get_template("live.html")
-    return HTMLResponse(content=tmpl.render())
 
 # ── API: Watched wallet scanner stats ─────────────────────────────────────────
 @app.get("/api/copy/wallet-stats")
