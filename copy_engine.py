@@ -297,28 +297,21 @@ async def execute_copy_trade(trade: CopyTrade) -> bool:
         return False
 
     try:
-        # Step 1: PumpPortal (bonding curve)
-        result = await execute_pumpfun_swap(
-            KEYPAIR_LOADED, trade.action.lower(), trade.token_mint,
-            trade.scaled_amount_sol, slippage=15, priority_fee=0.0, pool="auto",
+        # Jupiter is the single execution path. Verified Apr 17:
+        #   - BONK round-trip landed in 3s each direction at 0.00025 priority
+        #   - pump-amm targets quote cleanly via Jupiter's "Pump.fun Amm" route
+        # The vendored pump_swap SDK path silently aborts on missing creator vault
+        # for many pools; PumpPortal returns 400 for graduated tokens. Both removed.
+        # Jupiter handles bonding-curve, pump-amm, Raydium, Orca — one path, one
+        # priority fee dial, one confirmation check. 1000bps slippage handles the
+        # volatile pump-amm routes (price impact is typically <0.1%; slippage budget
+        # absorbs the 2-6s execution lag vs source).
+        in_mint  = SOL_MINT if trade.action == "BUY" else trade.token_mint
+        out_mint = trade.token_mint if trade.action == "BUY" else SOL_MINT
+        result = await execute_swap_legacy(
+            KEYPAIR_LOADED, in_mint, out_mint,
+            trade.scaled_amount_sol, slippage_bps=1000,
         )
-
-        # Step 2: PumpSwap AMM (graduated tokens)
-        if not result.success:
-            ps = await execute_pumpswap(
-                KEYPAIR_LOADED, trade.action.lower(), trade.token_mint,
-                trade.scaled_amount_sol, slippage=15, pool_address=trade.pool_address,
-            )
-            if ps.success:
-                result = SwapResult(success=True, signature=ps.signature, dex="pumpswap")
-            else:
-                # Step 3: Jupiter fallback
-                in_mint  = SOL_MINT if trade.action == "BUY" else trade.token_mint
-                out_mint = trade.token_mint if trade.action == "BUY" else SOL_MINT
-                result = await execute_swap_legacy(
-                    KEYPAIR_LOADED, in_mint, out_mint,
-                    trade.scaled_amount_sol, slippage_bps=500,
-                )
 
         if result.success:
             trade.our_sig = result.signature
