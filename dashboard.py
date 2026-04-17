@@ -294,48 +294,71 @@ def _trade_pnl(t):
     return float(t.get("realized_pnl_sol", 0) or 0)
 
 # ── API: Open Positions (token balances) ─────────────────────────────────────
+_POSITIONS_CACHE: dict = {"ts": 0, "data": None}
+_POSITIONS_TTL = 20  # seconds — positions rarely change faster than this
+
+
 @app.get("/api/wallet/positions")
 async def get_wallet_positions():
+    """Return held token balances. Cached 20s. Fans out RPC calls in parallel
+    with tight per-call timeouts so a single slow RPC can't block the page."""
     cfg = load_copy_config()
     addr = cfg.get("user_wallet", "")
     if not addr:
         return {"positions": [], "count": 0}
-    # Try both SPL Token and Token-2022 programs. Multi-RPC fallback because
-    # publicnode intermittently times out on getTokenAccountsByOwner.
+
+    now = time.time()
+    if _POSITIONS_CACHE["data"] is not None and now - _POSITIONS_CACHE["ts"] < _POSITIONS_TTL:
+        return _POSITIONS_CACHE["data"]
+
+    import aiohttp
     rpcs = [RPC_URL, "https://api.mainnet-beta.solana.com"]
     programs = [
-        "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",  # classic SPL
-        "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",  # Token-2022
+        ("spl", "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"),
+        ("t22", "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"),
     ]
-    import aiohttp
+
+    async def fetch_one(rpc: str, prog_name: str, prog_id: str):
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(rpc, json={
+                    "jsonrpc": "2.0", "id": 1, "method": "getTokenAccountsByOwner",
+                    "params": [addr, {"programId": prog_id}, {"encoding": "jsonParsed"}],
+                }, timeout=aiohttp.ClientTimeout(total=4)) as resp:
+                    if resp.status != 200:
+                        return None
+                    data = await resp.json()
+                    return (prog_name, data.get("result", {}).get("value", []))
+        except Exception:
+            return None
+
+    # Race 4 in parallel (2 RPCs × 2 programs). Take first success per program.
+    tasks = [fetch_one(rpc, pn, pid) for rpc in rpcs for pn, pid in programs]
+    results = await asyncio.gather(*tasks)
+
+    seen_programs = set()
     positions = []
-    for prog in programs:
-        for rpc in rpcs:
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(rpc, json={
-                        "jsonrpc": "2.0", "id": 1,
-                        "method": "getTokenAccountsByOwner",
-                        "params": [addr, {"programId": prog}, {"encoding": "jsonParsed"}],
-                    }, timeout=aiohttp.ClientTimeout(total=20)) as resp:
-                        if resp.status != 200:
-                            continue
-                        data = await resp.json()
-                        for acc in data.get("result", {}).get("value", []):
-                            info = acc["account"]["data"]["parsed"]["info"]
-                            amount = int(info["tokenAmount"]["amount"])
-                            if amount > 0:
-                                positions.append({
-                                    "mint": info["mint"],
-                                    "amount": amount / (10 ** info["tokenAmount"]["decimals"]),
-                                    "raw": amount,
-                                    "decimals": info["tokenAmount"]["decimals"],
-                                    "program": "spl" if prog.startswith("Token") else "t22",
-                                })
-                        break  # success for this program — don't try next RPC
-            except Exception:
-                continue
-    return {"positions": positions, "count": len(positions)}
+    for r in results:
+        if r is None: continue
+        prog_name, accounts = r
+        if prog_name in seen_programs: continue
+        seen_programs.add(prog_name)
+        for acc in accounts:
+            info = acc["account"]["data"]["parsed"]["info"]
+            amount = int(info["tokenAmount"]["amount"])
+            if amount > 0:
+                positions.append({
+                    "mint": info["mint"],
+                    "amount": amount / (10 ** info["tokenAmount"]["decimals"]),
+                    "raw": amount,
+                    "decimals": info["tokenAmount"]["decimals"],
+                    "program": prog_name,
+                })
+
+    result = {"positions": positions, "count": len(positions)}
+    _POSITIONS_CACHE["ts"] = now
+    _POSITIONS_CACHE["data"] = result
+    return result
 
 # ── API: Wallet Balance ──────────────────────────────────────────────────────
 @app.get("/api/wallet/balance")
