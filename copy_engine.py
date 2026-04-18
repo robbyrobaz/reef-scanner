@@ -811,7 +811,7 @@ def _ws_urls() -> list:
     return urls
 
 
-async def helius_logs_listener() -> None:
+async def helius_logs_listener(shard_wallets: Optional[List[str]] = None, shard_label: str = "") -> None:
     """
     Subscribe to logsSubscribe for each watched wallet.
     Tries Helius WS first (better SLA); falls back to public Solana RPC
@@ -827,18 +827,26 @@ async def helius_logs_listener() -> None:
     delay = 2
     ws_url_index = 0  # start with Helius
 
+    # shard_wallets/shard_label are passed in by main() so we can spawn multiple
+    # listener tasks, each owning up to ~80 subs, to stay under public-RPC's
+    # per-connection cap (seen as 1013 close with 170 subs on one connection).
     while True:
         try:
             config = load_copy_config()
-            wallets = [w for w, e in config.copies.items()
-                       if e.enabled and w != config.user_wallet]
+            if shard_wallets is not None:
+                wallets = [w for w in shard_wallets
+                           if config.copies.get(w) and config.copies[w].enabled
+                           and w != config.user_wallet]
+            else:
+                wallets = [w for w, e in config.copies.items()
+                           if e.enabled and w != config.user_wallet]
             if not wallets:
                 await asyncio.sleep(30)
                 continue
 
             urls = _ws_urls()
             ws_url = urls[ws_url_index % len(urls)]
-            label = "Helius" if "helius" in ws_url else "Solana public"
+            label = ("Helius" if "helius" in ws_url else "Solana public") + (f"-{shard_label}" if shard_label else "")
             print(f"  🔔 Solana WS ({label}): connecting ({len(wallets)} wallets)...")
             async with websockets.connect(
                 ws_url,
@@ -850,6 +858,10 @@ async def helius_logs_listener() -> None:
                 req_map: Dict[int, str] = {}
                 sub_map: Dict[int, str] = {}
 
+                # Throttle subscription rate. Public RPC closes the socket with
+                # 1013 "too many subscriptions attempted" when we flood >~100 subs
+                # instantly. 50ms per request = 8.5s to subscribe 170 wallets;
+                # well under any rate limit and reliably stays connected.
                 for i, wallet in enumerate(wallets):
                     req_id = 200 + i
                     req_map[req_id] = wallet
@@ -862,10 +874,16 @@ async def helius_logs_listener() -> None:
                             {"commitment": "processed"},
                         ],
                     }))
+                    if label != "Helius":
+                        await asyncio.sleep(0.05)  # 50ms between subs on public RPC
 
                 print(f"  ✅ Solana WS ({label}): {len(wallets)} subscriptions active")
                 delay = 2        # reset backoff on successful connect
-                ws_url_index = 0 # reset to Helius so we retry it after reconnects
+                # Don't reset ws_url_index — we were thrashing between Helius (429)
+                # and public on every reconnect. Stay on whichever URL succeeded.
+                # Engine restart will try Helius again; in-session we stick with
+                # the working endpoint.
+                _ws_connected_at = time.time()
 
                 while True:
                     try:
@@ -1393,13 +1411,26 @@ async def run_engine() -> None:
     # Shared paper positions dict (passed by reference to all coroutines)
     paper_positions = load_paper_positions()
 
-    # Run all listeners + consensus processor concurrently
+    # Shard logsSubscribe across multiple WS connections to stay under the
+    # public-RPC per-connection cap (~100 subs triggers 1013 close).
+    # 80 per shard is a safe margin; 170 wallets → 3 shards.
+    all_wallets = [w for w, e in config.copies.items()
+                   if e.enabled and w != config.user_wallet]
+    SHARD_SIZE = 80
+    shards = [all_wallets[i:i+SHARD_SIZE] for i in range(0, len(all_wallets), SHARD_SIZE)] or [[]]
+    print(f"   WS shards: {len(shards)} × up to {SHARD_SIZE} wallets each")
+
+    listener_coros = [
+        helius_logs_listener(shard_wallets=s, shard_label=f"{i+1}/{len(shards)}")
+        for i, s in enumerate(shards)
+    ]
+
     await asyncio.gather(
-        helius_logs_listener(),          # fastest: ~200-500ms via logsSubscribe
-        pumpportal_ws_listener(),        # fast: ms latency for bonding-curve
-        polling_loop(paper_positions),   # slow: fallback for non-pump / WS gaps
-        consensus_processor(paper_positions),  # fires buffered signals
-        ghost_sweep_loop(paper_positions),     # 20s tick: close orphaned live positions
+        *listener_coros,
+        pumpportal_ws_listener(),
+        polling_loop(paper_positions),
+        consensus_processor(paper_positions),
+        ghost_sweep_loop(paper_positions),
     )
 
 
