@@ -1005,27 +1005,34 @@ async def sweep_ghost_positions(paper_positions: Dict) -> None:
     import aiohttp
     addr = str(KEYPAIR_LOADED.pubkey())
     to_remove = []
+    # Use same publicnode-first, mainnet-beta-fallback strategy the executors use.
+    # Direct mainnet-beta calls fail ~90% of the time under load; publicnode is
+    # more reliable. Retry across RPCs on failure rather than silently skipping.
+    RPCS = ["https://solana.publicnode.com", "https://api.mainnet-beta.solana.com"]
     for key, pos in list(paper_positions.items()):
         ts = pos.get("timestamp", now)
         if now - ts < GRACE_S: continue
         mint = pos.get("token_mint") or (key.split("::", 1)[1] if "::" in key else key)
-        # Check our actual on-chain balance for this mint
-        try:
-            async with aiohttp.ClientSession() as s:
-                async with s.post("https://api.mainnet-beta.solana.com", json={
-                    "jsonrpc": "2.0", "id": 1, "method": "getTokenAccountsByOwner",
-                    "params": [addr, {"mint": mint}, {"encoding": "jsonParsed"}],
-                }, timeout=aiohttp.ClientTimeout(total=8)) as resp:
-                    if resp.status != 200: continue
-                    d = await resp.json()
-                    amt = 0
-                    for a in d.get("result", {}).get("value", []):
-                        info = a.get("account", {}).get("data", {}).get("parsed", {}).get("info", {})
-                        amt += int(info.get("tokenAmount", {}).get("amount", 0) or 0)
-                    if amt == 0:
-                        to_remove.append((key, pos, mint))
-        except Exception:
-            continue  # can't verify → leave alone (better to keep than to falsely kill)
+        amt = None  # None = could not verify (keep position); 0 = verified empty (ghost)
+        for rpc in RPCS:
+            try:
+                async with aiohttp.ClientSession() as s:
+                    async with s.post(rpc, json={
+                        "jsonrpc": "2.0", "id": 1, "method": "getTokenAccountsByOwner",
+                        "params": [addr, {"mint": mint}, {"encoding": "jsonParsed"}],
+                    }, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                        if resp.status != 200: continue
+                        d = await resp.json()
+                        total = 0
+                        for a in d.get("result", {}).get("value", []):
+                            info = a.get("account", {}).get("data", {}).get("parsed", {}).get("info", {})
+                            total += int(info.get("tokenAmount", {}).get("amount", 0) or 0)
+                        amt = total
+                        break  # got a definitive answer
+            except Exception:
+                continue
+        if amt == 0:
+            to_remove.append((key, pos, mint))
 
     if not to_remove:
         return
