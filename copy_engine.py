@@ -116,6 +116,13 @@ def _seen_add(sig: str) -> None:
 
 # Per-token cooldown: mint → timestamp of last BUY we executed
 _token_cooldown: Dict[str, float] = {}
+# Mints in the blacklist have no Jupiter route — orphan sweep skips them.
+# Populated on NO_ROUTES_FOUND returns. In-memory only (resets on restart).
+_dead_mint_blacklist: set = set()
+# In-flight SELLs keyed on source_wallet::token_mint. Prevents the race where
+# two SELL signals for the same position both pass the paper_positions check
+# before the first one pops the key → second one fails "No balance to sell".
+_sell_inflight: set = set()
 
 # Consensus buffer: mint → list of (wallet, timestamp, action, sol_amt, pool_addr, price)
 _signal_buffer: Dict[str, List[Tuple]] = {}
@@ -661,13 +668,17 @@ async def _execute_signal(
         is_watch = True  # treat as watch regardless of copy_mode
         _live = False
 
-    # Skip LIVE SELL if we never opened this (source_wallet, mint) position.
-    # Saves wasted RPC calls + CSV pollution on "No balance to sell" failures.
-    # Many source SELLs signal mints we never bought (offline, cooldowns, etc.).
+    # Skip LIVE SELL if we never opened this position OR if another SELL for
+    # the same (wallet,mint) is already in flight. The inflight check prevents
+    # the race where two SELLs pass the paper_positions check before the first
+    # one pops the key → second fails "No balance to sell" in swap_executor.
     if _live and action == "SELL":
         pos_key = f"{source_wallet}::{token_mint}"
         if pos_key not in paper_positions:
             return  # never opened — nothing to close
+        if pos_key in _sell_inflight:
+            return  # another SELL already executing for this position
+        _sell_inflight.add(pos_key)
 
     # Skip live BUY if we're already holding this (source_wallet, mint) position.
     # The 5-min token cooldown prevents back-to-back BUYs but expires while we
@@ -745,6 +756,9 @@ async def _execute_signal(
             # causing us to miss valid subsequent BUY signals from other wallets.
             _token_cooldown.pop(token_mint, None)
             print(f"    🔓 cooldown released on failed BUY → {token_mint[:16]}...")
+        # Clear in-flight SELL marker regardless of outcome
+        if action == "SELL":
+            _sell_inflight.discard(f"{source_wallet}::{token_mint}")
         save_copy_trade(trade)
 
 
@@ -895,9 +909,13 @@ async def helius_logs_listener(shard_wallets: Optional[List[str]] = None, shard_
             ws_url = urls[ws_url_index % len(urls)]
             label = ("Helius" if "helius" in ws_url else "Solana public") + (f"-{shard_label}" if shard_label else "")
             print(f"  🔔 Solana WS ({label}): connecting ({len(wallets)} wallets)...")
+            # ping_interval=30 keeps connection alive. publicnode was dropping us
+            # with 1013 "Connection timeout exceeded" ~10×/hour when idle — pings
+            # fix that. ping_timeout=20 lets us detect dead conns faster.
             async with websockets.connect(
                 ws_url,
-                ping_interval=None,
+                ping_interval=30,
+                ping_timeout=20,
                 close_timeout=10,
                 max_size=10 * 1024 * 1024,
             ) as ws:
@@ -1230,9 +1248,12 @@ async def _sweep_orphans_and_stale(paper_positions: Dict) -> None:
     if not held:
         return
 
-    # 2. Identify orphans = held mints NOT in paper_positions
+    # 2. Identify orphans = held mints NOT in paper_positions (and not dead-listed)
     tracked_mints = {k.split("::", 1)[1] for k in paper_positions.keys() if "::" in k}
-    orphans = [m for m in held if m not in tracked_mints]
+    orphans = [m for m in held if m not in tracked_mints and m not in _dead_mint_blacklist]
+    if _dead_mint_blacklist & set(held.keys()):
+        skipped = len(_dead_mint_blacklist & set(held.keys()))
+        print(f"  🧹 orphan sweep: {skipped} dead-blacklisted mint(s) held but skipped (no Jupiter route)")
 
     # 3. Identify stale = held mints tracked, but position older than threshold
     now = int(time.time())
@@ -1264,6 +1285,11 @@ async def _sweep_orphans_and_stale(paper_positions: Dict) -> None:
         try:
             ok = await execute_copy_trade(trade)
             trade.status = "confirmed" if ok else "failed"
+            # If Jupiter has no route, the mint is permanently unsellable on-chain.
+            # Blacklist it so we don't retry every 30 min forever.
+            if not ok and trade.error and "NO_ROUTES_FOUND" in str(trade.error):
+                _dead_mint_blacklist.add(mint)
+                print(f"      ⛔ {mint[:16]}... blacklisted (no Jupiter route)")
             save_copy_trade(trade)
             if ok and mint not in tracked_mints:
                 asyncio.create_task(_close_empty_ata(KEYPAIR_LOADED, mint))
