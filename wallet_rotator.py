@@ -31,7 +31,7 @@ from copy_config import load_copy_config, save_copy_config, CopyEntry, config_lo
 
 # ── Tuning ───────────────────────────────────────────────────────────────────
 COPY_ALLOC_SOL       = 0.01   # Simulated position size per buy
-MAX_WATCHED          = 10     # Max wallets to watch simultaneously
+MAX_WATCHED          = 15     # Max wallets to watch simultaneously (10 core + 5 exploration)
 MAX_ROTATE_PER_RUN   = 5      # Max wallets to swap out per daily run (limits churn)
 MIN_SIM_TRADES       = 15     # Min completed round-trips from simulation to qualify
 MIN_ACTIVE_DAYS      = 7      # Wallet must have traded within this many days
