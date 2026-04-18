@@ -518,6 +518,13 @@ async def _execute_signal(
     # Re-read trade_mode from config at execution time (belt-and-suspenders safety)
     _live = not DRY_RUN and config.trade_mode == "live"
 
+    # Per-wallet override: if this wallet is set to copy_mode="watch", force paper
+    # simulation even when engine is live. Lets us evaluate candidate wallets without
+    # committing real SOL to them.
+    if _live and entry.copy_mode == "watch":
+        _live = False
+        tag = f"[watch:{label}] " if label else "[watch] "
+
     # Skip live BUY if we're already holding this (source_wallet, mint) position.
     # The 5-min token cooldown prevents back-to-back BUYs but expires while we
     # might still hold the first position, causing silent double-buys (saw this

@@ -33,12 +33,20 @@ def config_lock():
 
 @dataclass
 class CopyEntry:
-    """Per-wallet copy settings"""
+    """Per-wallet copy settings.
+
+    copy_mode:
+      "live"  — execute real swaps when engine is in trade_mode=live (default, backward-compat)
+      "watch" — subscribe + simulate only; paper-style PnL recorded, no real tx fired
+                even when engine is in live mode. Used to evaluate candidate wallets
+                alongside the real copy list before promoting them.
+    """
     enabled: bool = False
     alloc_sol: float = 0.01
     last_sig: str = ""
     last_copy_ts: int = 0
     label: str = ""
+    copy_mode: str = "live"
 
 
 @dataclass
