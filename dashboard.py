@@ -219,8 +219,9 @@ async def get_wallet_stats():
     # Status breakdown. Split paper into:
     #   - historical paper (status=dry_run, error != watch_mode)
     #   - watch-mode (ongoing evaluation, status=dry_run, error == watch_mode)
-    paper_historical = [t for t in trades if t.get("status") == "dry_run" and t.get("error") != "watch_mode"]
+    paper_historical = [t for t in trades if t.get("status") == "dry_run" and t.get("error") not in ("watch_mode", "watch_large")]
     paper_watch      = [t for t in trades if t.get("status") == "dry_run" and t.get("error") == "watch_mode"]
+    paper_large      = [t for t in trades if t.get("status") == "dry_run" and t.get("error") == "watch_large"]
     paper = paper_historical  # backward-compat: old dashboard uses 'paper' key for historical
     live = [t for t in trades if t.get("status") == "confirmed"]
     failed = [t for t in trades if t.get("status") == "failed"]
@@ -284,6 +285,7 @@ async def get_wallet_stats():
         "paper": _stats(paper),
         "live":  _stats(live),
         "watch": _stats(paper_watch),   # NEW: watch-mode paper stats (ongoing eval of 80 candidates)
+        "watch_large": _stats(paper_large),  # Large-order-follow bucket (different wallet universe, no size pre-filter)
         "failed_trades": len(failed),
         "starting_sol": starting_balance,
         "last_updated": last_ts,       # Unix timestamp of most recent trade

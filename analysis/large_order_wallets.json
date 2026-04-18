@@ -1,0 +1,443 @@
+[
+  {
+    "wallet": "H2dVzkjhMqLyEUY8BuBkm8dmQsKpDV8Re6nhyPBrqpRw",
+    "n_big_buys_7d": 1,
+    "avg_big": 11.001721837000002,
+    "max_big": 11.001721837000002,
+    "net_30d": 62689.626642719006
+  },
+  {
+    "wallet": "9R37gwc176coEoNahx2zGUEP9eHBgXP47VGuYjqjV954",
+    "n_big_buys_7d": 1,
+    "avg_big": 139.241026612,
+    "max_big": 139.241026612,
+    "net_30d": 39000.046639528
+  },
+  {
+    "wallet": "ArRbz6RswRvvPBVCvA2MXjWf68ipsYYbi8Qmw5eW1uR8",
+    "n_big_buys_7d": 1,
+    "avg_big": 12.725831584,
+    "max_big": 12.725831584,
+    "net_30d": 17625.627784484008
+  },
+  {
+    "wallet": "AGHCc9zmCJWoa33ojZ5hFiefeopcnfJJJyC94yfxzSPu",
+    "n_big_buys_7d": 1,
+    "avg_big": 13.182819740000001,
+    "max_big": 13.182819740000001,
+    "net_30d": 16717.962882131007
+  },
+  {
+    "wallet": "Ft4wK1npnUJS2gRfff2R7dcAuLcx6PjnNXSZbqBH8cdY",
+    "n_big_buys_7d": 1,
+    "avg_big": 10.920656941,
+    "max_big": 10.920656941,
+    "net_30d": 16331.371246866998
+  },
+  {
+    "wallet": "CnE2KrHA8oCppYeTQ94cGwicistuj7DHbLaNhuXBdTWj",
+    "n_big_buys_7d": 1,
+    "avg_big": 16.267089594,
+    "max_big": 16.267089594,
+    "net_30d": 12262.837903186995
+  },
+  {
+    "wallet": "HEAVXZEVFyrFqAL3vVwukQUo6Wnm1SpfELFpAzDsL8KQ",
+    "n_big_buys_7d": 1,
+    "avg_big": 10.971300644,
+    "max_big": 10.971300644,
+    "net_30d": 11603.731919518
+  },
+  {
+    "wallet": "5Q65RWgyBC4P4ERSDDrNHt7QUUt1usAntsWejjMxQp4Y",
+    "n_big_buys_7d": 1,
+    "avg_big": 11.185384127,
+    "max_big": 11.185384127,
+    "net_30d": 11261.776770019003
+  },
+  {
+    "wallet": "BYtFS7se3yQTrRbb61SMt1vzjZzodafEZYmSBnKmuRZ",
+    "n_big_buys_7d": 1,
+    "avg_big": 10.517582105,
+    "max_big": 10.517582105,
+    "net_30d": 11223.610760879996
+  },
+  {
+    "wallet": "2t42WCQpAv4JT6z8wbSTADhJ5UJ42Rp44DMzLwcFS3TD",
+    "n_big_buys_7d": 1,
+    "avg_big": 21.921765854,
+    "max_big": 21.921765854,
+    "net_30d": 10934.041498788996
+  },
+  {
+    "wallet": "5a2z6VZaXPWEN8ZGDZYhGyq7j2vURM5mQnFU9SzZm9TZ",
+    "n_big_buys_7d": 1,
+    "avg_big": 25.760538123,
+    "max_big": 25.760538123,
+    "net_30d": 8920.783313026002
+  },
+  {
+    "wallet": "GwXREsELH5H6RjwmvNLE5UBucKTJuZGehM4zFfdtHy33",
+    "n_big_buys_7d": 1,
+    "avg_big": 20.149078468,
+    "max_big": 20.149078468,
+    "net_30d": 4858.058055019
+  },
+  {
+    "wallet": "CKVqftQDCnTjS4SDcY9sxBRJXQBhxRFL6bqmQRR4p9Se",
+    "n_big_buys_7d": 1,
+    "avg_big": 14.574073445,
+    "max_big": 14.574073445,
+    "net_30d": 3637.885883104
+  },
+  {
+    "wallet": "Cv8Fke8NXo4mGW7RwtEzSiKgUAZ7HiKCNVbDUhfr37PX",
+    "n_big_buys_7d": 1,
+    "avg_big": 34.714451774000004,
+    "max_big": 34.714451774000004,
+    "net_30d": 2942.7725929500007
+  },
+  {
+    "wallet": "ByQUL8NRw5QwVoXpNQ6du7t2Hz5aRfb1xWMcbeaYcomc",
+    "n_big_buys_7d": 1,
+    "avg_big": 10.660602931,
+    "max_big": 10.660602931,
+    "net_30d": 2572.2592897740005
+  },
+  {
+    "wallet": "7PLDwJ24gWETWcgZJvmDejnDPL4ac39F9WkYi1tynC5k",
+    "n_big_buys_7d": 1,
+    "avg_big": 10.406755762,
+    "max_big": 10.406755762,
+    "net_30d": 2517.5623159859997
+  },
+  {
+    "wallet": "4ZSPbQTQJgWKN2BDrEwKLh5BrWC5cxRZYKaXrCrXrF7J",
+    "n_big_buys_7d": 1,
+    "avg_big": 17.065551959,
+    "max_big": 17.065551959,
+    "net_30d": 2431.8624810329998
+  },
+  {
+    "wallet": "3j37g7651KERYMwtrNhswA4Kgbai1ftg5TFzLirDUSv5",
+    "n_big_buys_7d": 1,
+    "avg_big": 10.209582423,
+    "max_big": 10.209582423,
+    "net_30d": 2422.3346997359995
+  },
+  {
+    "wallet": "BT39D8WfRbjoXdScuEQv1Vc2Xf7LUnnYnqYxgah1SvxD",
+    "n_big_buys_7d": 1,
+    "avg_big": 10.717232219,
+    "max_big": 10.717232219,
+    "net_30d": 2319.920096336
+  },
+  {
+    "wallet": "EnNXN7fEBTpKC5zUpEKqdubvcrWjwZVRVtpyzeggu4pv",
+    "n_big_buys_7d": 1,
+    "avg_big": 10.964422654,
+    "max_big": 10.964422654,
+    "net_30d": 2307.7597544060004
+  },
+  {
+    "wallet": "HcheTRLHqnN1ZC3uEsA6m2t4QB1RLD98EmbiyvqUa3JY",
+    "n_big_buys_7d": 1,
+    "avg_big": 11.189714124,
+    "max_big": 11.189714124,
+    "net_30d": 2294.828330929
+  },
+  {
+    "wallet": "7hCpTusxeDSkShEMsKrEQwcGdPjp2Kzg3fpizxycczEa",
+    "n_big_buys_7d": 1,
+    "avg_big": 12.309935094,
+    "max_big": 12.309935094,
+    "net_30d": 1426.1721085269999
+  },
+  {
+    "wallet": "L8icAZA2NYFa1RG26UK499JoJ8CTHqNTSBvis3cD626",
+    "n_big_buys_7d": 1,
+    "avg_big": 13.437072718,
+    "max_big": 13.437072718,
+    "net_30d": 1409.926984625
+  },
+  {
+    "wallet": "6Hq9Q61hVxmsKBmeUovDkRkcurtkPxvm32AjGX5gGuQ6",
+    "n_big_buys_7d": 1,
+    "avg_big": 14.129384248,
+    "max_big": 14.129384248,
+    "net_30d": 1345.6567690270003
+  },
+  {
+    "wallet": "H48AVpakFKA5BRPw6JF2xf6sFAcB4omfrkubGraZB23",
+    "n_big_buys_7d": 1,
+    "avg_big": 16.418311909,
+    "max_big": 16.418311909,
+    "net_30d": 1309.1717529240002
+  },
+  {
+    "wallet": "2ofmiQ9GgVXZjrDi9r8CJwqMCmwEHi7xzrc8m5Af5vVu",
+    "n_big_buys_7d": 1,
+    "avg_big": 17.452284965,
+    "max_big": 17.452284965,
+    "net_30d": 876.8383978269999
+  },
+  {
+    "wallet": "2QioJBwKBVtsP2FajWoquvCt5VVjPUxtpDaXecprcgpF",
+    "n_big_buys_7d": 2,
+    "avg_big": 459.80154916850006,
+    "max_big": 464.72408451700005,
+    "net_30d": 298.447317936
+  },
+  {
+    "wallet": "HNF7Q6A1Y5vma3YqjpEPsTqMTevK9dM1DxweaxsSgMzc",
+    "n_big_buys_7d": 1,
+    "avg_big": 131.90712403700002,
+    "max_big": 131.90712403700002,
+    "net_30d": 180.88246361799992
+  },
+  {
+    "wallet": "BA5oP5PEC6anujomfcGWSSTMmttAxHeSne4bYaPoKScz",
+    "n_big_buys_7d": 1,
+    "avg_big": 19.619703169999998,
+    "max_big": 19.619703169999998,
+    "net_30d": 112.951200122
+  },
+  {
+    "wallet": "7iuX63HVJohu55eYNjGnukSebe5KFyHdvEEKKYSEmVUz",
+    "n_big_buys_7d": 2,
+    "avg_big": 16.16113704,
+    "max_big": 21.2101,
+    "net_30d": 41.858090098999995
+  },
+  {
+    "wallet": "9HYz7pVPn3Z1wJdYNRWVUPHWCLdKdy4gnKYmsEpwcQMU",
+    "n_big_buys_7d": 2,
+    "avg_big": 15.235583646999999,
+    "max_big": 20.316667289999998,
+    "net_30d": 34.82991875999999
+  },
+  {
+    "wallet": "A4YfYFYuNeuuMCNXchTgtbMrFzC42qqtw42wveyNvp5S",
+    "n_big_buys_7d": 1,
+    "avg_big": 25.2285,
+    "max_big": 25.2285,
+    "net_30d": 31.284785139000004
+  },
+  {
+    "wallet": "AugGVK7m51ZhuRqa7Lbn1ikfievoieUbCJp3KNARmbfa",
+    "n_big_buys_7d": 1,
+    "avg_big": 10.125533078,
+    "max_big": 10.125533078,
+    "net_30d": 31.051099029999996
+  },
+  {
+    "wallet": "HduKnyipxSe4AWU1wbbyKBNZGKjjkrufAdNT1ejfuPEi",
+    "n_big_buys_7d": 1,
+    "avg_big": 10.104,
+    "max_big": 10.104,
+    "net_30d": 25.449760538
+  },
+  {
+    "wallet": "9DrD4TYECWvHhwKFzGmET3r7agdC31e5w9vAPf5EweE2",
+    "n_big_buys_7d": 2,
+    "avg_big": 13.655000000000001,
+    "max_big": 15.700000000000001,
+    "net_30d": 25.220636773999985
+  },
+  {
+    "wallet": "HvGVUrqeofi25CcMNneRYozJGP1tEjcfWFjwC4wbXU93",
+    "n_big_buys_7d": 1,
+    "avg_big": 10.0,
+    "max_big": 10.0,
+    "net_30d": 18.684471808000012
+  },
+  {
+    "wallet": "GhJ7oqe9pRdqSuaqrDw3PQTpTuSg3hZ2uw2j8TnvvHMm",
+    "n_big_buys_7d": 1,
+    "avg_big": 10.708670538,
+    "max_big": 10.708670538,
+    "net_30d": 18.166518135
+  },
+  {
+    "wallet": "AJU8Xybwa8RugUKvcqeMDyMsq2pSBmX1Wn77vyj6SAgG",
+    "n_big_buys_7d": 1,
+    "avg_big": 10.091999999999999,
+    "max_big": 10.091999999999999,
+    "net_30d": 15.423578618999997
+  },
+  {
+    "wallet": "3kg2i1rybxAbnxuUnSVZn5o9d7wiRckLpcnTMCdjVBJk",
+    "n_big_buys_7d": 1,
+    "avg_big": 66.617308529,
+    "max_big": 66.617308529,
+    "net_30d": 14.394927151000005
+  },
+  {
+    "wallet": "4c5hSgcNKkTgutzoWmEQxmachsP9qVcp87kjrGKZqbnk",
+    "n_big_buys_7d": 1,
+    "avg_big": 10.092,
+    "max_big": 10.092,
+    "net_30d": 11.945995414999997
+  },
+  {
+    "wallet": "Dtw7pHYMmkJf2v272BKpVu6MipHtNun7iaZvLqjBWtnK",
+    "n_big_buys_7d": 1,
+    "avg_big": 10.118050491,
+    "max_big": 10.118050491,
+    "net_30d": 11.352032150999996
+  },
+  {
+    "wallet": "pwZpq97vcUqG5r79PMYJ2rPdJeVfuqdTaxmNvj5KYMR",
+    "n_big_buys_7d": 1,
+    "avg_big": 10.202,
+    "max_big": 10.202,
+    "net_30d": 9.924785566
+  },
+  {
+    "wallet": "2HpvvY7TcbSdr8uNrDBUyEvbD9mcjg4ssmWQFcQcwJap",
+    "n_big_buys_7d": 1,
+    "avg_big": 10.001000000000001,
+    "max_big": 10.001000000000001,
+    "net_30d": 9.808242121
+  },
+  {
+    "wallet": "FVs71MmDydceC7JQMKG5xPFueSMbw1b6nEeKexpwjwH6",
+    "n_big_buys_7d": 1,
+    "avg_big": 15.0,
+    "max_big": 15.0,
+    "net_30d": 9.404129986000004
+  },
+  {
+    "wallet": "2ryMhRoJyUymrg9T7dP5VLMsukxdSYngzfowgZaAt5Ri",
+    "n_big_buys_7d": 1,
+    "avg_big": 10.09407408,
+    "max_big": 10.09407408,
+    "net_30d": 8.110825974999997
+  },
+  {
+    "wallet": "FseAUhZiqwchivasRmGKmuJc3fbHyErbLXK6cxUdBrhH",
+    "n_big_buys_7d": 1,
+    "avg_big": 14.83,
+    "max_big": 14.83,
+    "net_30d": 7.886906525999997
+  },
+  {
+    "wallet": "AuPp4YTMTyqxYXQnHc5KUc6pUuCSsHQpBJhgnD45yqrf",
+    "n_big_buys_7d": 3,
+    "avg_big": 10.09337112,
+    "max_big": 10.09407408,
+    "net_30d": 7.763976217
+  },
+  {
+    "wallet": "6VntukhCesd7yG8cah2RQKZ7uVADZdzucC6WgUT8F7vv",
+    "n_big_buys_7d": 1,
+    "avg_big": 10.0,
+    "max_big": 10.0,
+    "net_30d": 6.242841476000002
+  },
+  {
+    "wallet": "3SkK3Pkzm8qwSx451xPtSqAMrkW2iDep7DY6vkMcJUvY",
+    "n_big_buys_7d": 1,
+    "avg_big": 10.61,
+    "max_big": 10.61,
+    "net_30d": 5.873355126000002
+  },
+  {
+    "wallet": "7QVD3iPv4YhwsyriWPZB635eQjTpw431W5UEjUPFks1m",
+    "n_big_buys_7d": 1,
+    "avg_big": 15.151,
+    "max_big": 15.151,
+    "net_30d": 4.903408625000001
+  },
+  {
+    "wallet": "AcubbnTHb7am2LKJkq6S7NrmxCXmmZbiiRH3uD3Yt9hE",
+    "n_big_buys_7d": 2,
+    "avg_big": 10.0,
+    "max_big": 10.0,
+    "net_30d": 4.427904596000001
+  },
+  {
+    "wallet": "9koAgi8kUJL4jHhmtFJpjCAnFJ8t9v1A1qt3TioCCdoT",
+    "n_big_buys_7d": 1,
+    "avg_big": 10.097993577999999,
+    "max_big": 10.097993577999999,
+    "net_30d": 4.410557712000001
+  },
+  {
+    "wallet": "GVg53PS9FA5Y7gvvuSPVJzfxxCQSHTpChKNb5Tp4m8JW",
+    "n_big_buys_7d": 1,
+    "avg_big": 14.141,
+    "max_big": 14.141,
+    "net_30d": 4.2107719009999975
+  },
+  {
+    "wallet": "3DMRUSmxb6Vcb7DDRAeLf99VpBtABxpMtLHsqCq3qQQf",
+    "n_big_buys_7d": 2,
+    "avg_big": 10.66,
+    "max_big": 10.84,
+    "net_30d": 3.8270541710000003
+  },
+  {
+    "wallet": "DMt3CYLCCyMW6zp8BMJS3xHg9ZVcdzvN76MfyAYZ5DmU",
+    "n_big_buys_7d": 1,
+    "avg_big": 10.0,
+    "max_big": 10.0,
+    "net_30d": 2.7888717089999773
+  },
+  {
+    "wallet": "DaNTez3DkF3w6f4NMXkudMbUXCLJisJXWSD7zVWfjY1G",
+    "n_big_buys_7d": 1,
+    "avg_big": 10.0,
+    "max_big": 10.0,
+    "net_30d": 1.8531471699999855
+  },
+  {
+    "wallet": "DhXE3fsTNGPMpBadW47zfQzg5J3K12Lekvq97Vbx9Kjw",
+    "n_big_buys_7d": 1,
+    "avg_big": 11.136137594,
+    "max_big": 11.136137594,
+    "net_30d": 1.8043691109999997
+  },
+  {
+    "wallet": "4w92g2eskgXoSqh93Z1jHxtSMq3Efsni8CGxFe9Penms",
+    "n_big_buys_7d": 1,
+    "avg_big": 10.45,
+    "max_big": 10.45,
+    "net_30d": 1.7265187220000016
+  },
+  {
+    "wallet": "4XrGnDc22K5f2KpZCSBuFojZe1Xi4j5vYXueLrtU8tJY",
+    "n_big_buys_7d": 1,
+    "avg_big": 10.601767611000001,
+    "max_big": 10.601767611000001,
+    "net_30d": 1.6096843279999984
+  },
+  {
+    "wallet": "HiEiux5o414p15HUxBbWdtjZrwBrpPXU9Bt3Nu5dSaRo",
+    "n_big_buys_7d": 1,
+    "avg_big": 10.0,
+    "max_big": 10.0,
+    "net_30d": 1.535353349000001
+  },
+  {
+    "wallet": "H1TmejbZSsWNZv65eMMghAgDcNfsJwQoPrngrr64Cy2o",
+    "n_big_buys_7d": 1,
+    "avg_big": 10.011999999999999,
+    "max_big": 10.011999999999999,
+    "net_30d": 0.5918206510000008
+  },
+  {
+    "wallet": "Ahf8Zdst5jCJx1n1fwVM9qaFTLdXyn9oQn6LexBe8gjq",
+    "n_big_buys_7d": 2,
+    "avg_big": 17.135275816000004,
+    "max_big": 17.356167806000002,
+    "net_30d": 0.2668044010000017
+  },
+  {
+    "wallet": "6T1jBRFDakWdECMmAsrd36MSF4dX6ZHNfJYphm37p9U5",
+    "n_big_buys_7d": 2,
+    "avg_big": 11.250466047500002,
+    "max_big": 11.993994211,
+    "net_30d": 0.09985194699999766
+  }
+]

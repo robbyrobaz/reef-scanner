@@ -616,6 +616,17 @@ async def _execute_signal(
         tag = f"[watch:{label}] " if label else "[watch] "
         is_watch = True
 
+    # Strategy = "large_order": only act when source amount_sol >= min_source_sol.
+    # Below threshold, skip entirely (don't record — keeps bucket pure).
+    is_large_order = getattr(entry, "strategy", "default") == "large_order"
+    if is_large_order:
+        threshold = getattr(entry, "min_source_sol", 0.0) or 0.0
+        if sol_amt < threshold:
+            return  # source's own trade too small; ignore
+        tag = f"[watch_large:{label}] " if label else "[watch_large] "
+        is_watch = True  # treat as watch regardless of copy_mode
+        _live = False
+
     # Skip live BUY if we're already holding this (source_wallet, mint) position.
     # The 5-min token cooldown prevents back-to-back BUYs but expires while we
     # might still hold the first position, causing silent double-buys (saw this
@@ -659,7 +670,7 @@ async def _execute_signal(
         # Tag watch-mode rows in error field so dashboard can separate ongoing
         # evaluation (watch) from historical backtest (pre-live paper).
         if is_watch:
-            trade.error = "watch_mode"
+            trade.error = "watch_large" if is_large_order else "watch_mode"
         pnl_str = f" pnl={trade.realized_pnl_sol:+.6f}" if trade.realized_pnl_sol else ""
         print(f"  🐸 {tag}PAPER {action} {scaled:.4f} SOL → {token_mint[:16]}...{pnl_str}")
         save_copy_trade(trade)

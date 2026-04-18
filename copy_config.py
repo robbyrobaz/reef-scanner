@@ -47,6 +47,11 @@ class CopyEntry:
     last_copy_ts: int = 0
     label: str = ""
     copy_mode: str = "live"
+    # Strategy tag — used by dashboard to bucket stats separately.
+    # "default" = normal copy/watch; "large_order" = only act on source buys
+    # >= min_source_sol. CSV error field tagged "watch_large" for dashboard filter.
+    strategy: str = "default"
+    min_source_sol: float = 0.0
 
 
 @dataclass
@@ -95,8 +100,12 @@ def load_copy_config() -> CopyConfig:
         with open(COPY_CONFIG_FILE, "r") as f:
             data = json.load(f)
         return CopyConfig.from_dict(data)
-    except (json.JSONDecodeError, KeyError, TypeError):
-        return CopyConfig()
+    except (json.JSONDecodeError, KeyError, TypeError) as e:
+        # LOUD failure — silent fallback caused a 170-wallet config to be
+        # overwritten with empty defaults on Apr 18. Never again.
+        import sys
+        print(f"❌ CONFIG LOAD FAILED ({type(e).__name__}: {e}) — refusing to start with empty defaults. Fix {COPY_CONFIG_FILE}.", file=sys.stderr)
+        sys.exit(1)
 
 
 def save_copy_config(config: CopyConfig) -> None:
