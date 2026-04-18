@@ -11,9 +11,18 @@
 - Watch bucket's "+0.84 mSOL/sell grind" is the RETAIL-sniper pattern, NOT our whale strategy. Don't confuse them.
 
 **What kills the strategy:**
-1. Missing whale signals (WS shard drop, Helius 429, polling gap) → miss the rip → month's profits evaporated
-2. Tail-capture ratio too low — source makes 630×, we make 3× because our 4s lag compresses the tail
-3. NOT slip — measured 0.1-0.7% on 4 of 5 whales; their deep pools absorb our 0.01-0.05 SOL invisibly
+1. Missing whale signals (WS shard drop, RPC gap) → miss the rip → month's profits evaporated
+2. Tail-capture ratio too low — source makes 630×, we make 3× because our lag compresses the tail
+3. Entry slip eating edge on small-win trades (source makes +4%, we pay +25% slip = net −21%)
+
+**Execution stack (Apr 18 overhaul):**
+- **Jito Block Engine** (`jito.wtf`) — tx submit routed through Jito so our swap lands in the SAME BLOCK as the source wallet's tx. Drops latency from ~8s (regular RPC) to ~400ms (one block). 100k lamport tip per tx (~$0.024). Falls back to QuickNode RPC if Jito rejects.
+  - Configured via env: `JITO_ENABLED=1`, `JITO_TIP_LAMPORTS=100000`, `JITO_BLOCK_ENGINE_URL=https://mainnet.block-engine.jito.wtf`
+  - Jupiter v1 embeds the tip automatically via `jitoTipLamports` in swap payload
+  - Log marker on success: `⚡ Jito-landed: <sig> tip=100000`
+  - **Expected impact:** on fast-moving memes the 7+ seconds we save = 20-30% less entry slip. First test (Apr 18): both BUY and SELL legs landed via Jito, no fallbacks, but test trade was on a non-rip so the full tail benefit wasn't exercised yet.
+- **Slip gate** — lives INSIDE `execute_swap_legacy` right before tx signing (moved from broken T+2s preview). Compares Jupiter's real quoted price vs source price. Aborts swap if adverse > per-wallet threshold. Per-wallet tolerance calibrated from 30d avg ROI (25% for 9EdcipnA5h with +766% avg; 5% for 6hXBg2nx with +93% avg).
+- **Priority fee cap 1.5M lamports** (0.0015 SOL/tx) — high-priority inclusion even at Jito fallback path.
 
 **Key design choices (Apr 18 2026):**
 - Proportional alloc: `min(0.05, max(0.01, source_sol × 0.001))` — conviction-weighted, cap at 0.05 SOL
