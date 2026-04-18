@@ -458,19 +458,31 @@ async def execute_copy_trade(trade: CopyTrade) -> bool:
                 trade.error = "submitted but not confirmed on-chain within 45s"
                 print(f"    ⏳ {trade.action} {trade.token_mint[:16]}... submitted but not confirmed — marking failed")
                 return False
-            # REAL fill price from tx receipt (not Jupiter's pre-slippage quote).
-            # PnL computed from these will match wallet balance change.
-            real_price = await _fetch_actual_fill(
-                result.signature, trade.action, trade.token_mint, str(KEYPAIR_LOADED.pubkey())
-            )
-            if real_price and real_price > 0:
-                if trade.action == "BUY":
-                    slip_pct = (real_price - trade.source_price_sol) / trade.source_price_sol * 100 if trade.source_price_sol > 0 else 0
-                else:
-                    slip_pct = (trade.source_price_sol - real_price) / trade.source_price_sol * 100 if trade.source_price_sol > 0 else 0
-                if abs(slip_pct) > 0.5:
-                    print(f"    🎯 real fill: {real_price:.3e} (source {trade.source_price_sol:.3e}, slip {slip_pct:+.2f}%)")
-                trade.our_price_sol = real_price
+            # ANTI-GHOST: getSignatureStatuses can briefly report "confirmed" for a tx
+            # that later forks out or expires with blockhash. We need to VERIFY the tx
+            # actually moved tokens to us, not just that it reached some confirmation
+            # state momentarily. Retry the fill lookup — if we still can't confirm
+            # real token delta, mark the trade failed rather than carry a ghost position.
+            real_price = None
+            for attempt in range(3):
+                real_price = await _fetch_actual_fill(
+                    result.signature, trade.action, trade.token_mint, str(KEYPAIR_LOADED.pubkey())
+                )
+                if real_price and real_price > 0:
+                    break
+                await asyncio.sleep(3)
+            if not real_price or real_price <= 0:
+                trade.error = "confirmed but no token delta — likely ghost tx (orphaned or failed inner swap)"
+                print(f"    👻 {trade.action} {trade.token_mint[:16]}... no token delta after confirm — marking failed")
+                return False
+            # Real fill succeeded — log slip if significant
+            if trade.action == "BUY":
+                slip_pct = (real_price - trade.source_price_sol) / trade.source_price_sol * 100 if trade.source_price_sol > 0 else 0
+            else:
+                slip_pct = (trade.source_price_sol - real_price) / trade.source_price_sol * 100 if trade.source_price_sol > 0 else 0
+            if abs(slip_pct) > 0.5:
+                print(f"    🎯 real fill: {real_price:.3e} (source {trade.source_price_sol:.3e}, slip {slip_pct:+.2f}%)")
+            trade.our_price_sol = real_price
             return True
         trade.error = result.error
         print(f"    ❌ exec failed ({trade.action} {trade.token_mint[:16]}...): {result.error[:180]}")
