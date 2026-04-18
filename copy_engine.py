@@ -68,6 +68,12 @@ MAX_TRADE_AGE_S = int(os.getenv("COPY_MAX_TRADE_AGE_S", "60"))
 # Auto-close paper positions that have been open longer than this without a sell signal
 STALE_POSITION_HOURS = float(os.getenv("STALE_POSITION_HOURS", "24"))
 
+# Force-close live positions after this many minutes if source hasn't sold.
+# Data-derived: paper shows 5-15min hold bucket is the ONLY losing bucket (WR 52%,
+# total -0.186 SOL). 1-5min bucket wins; past 5min trends negative. Exit at 5min
+# ourselves rather than follow source into the losing zone.
+LIVE_FORCE_EXIT_MIN = float(os.getenv("LIVE_FORCE_EXIT_MIN", "5.0"))
+
 # ── Shared state ─────────────────────────────────────────────────────────────
 # Dedup: sigs seen by any listener (prevents double-execution across WS + polling)
 # Uses a parallel deque to maintain insertion order for proper FIFO eviction.
@@ -902,6 +908,57 @@ async def pumpportal_ws_listener() -> None:
 
 
 # ── Polling Loop ──────────────────────────────────────────────────────────────
+async def force_exit_live_stale(paper_positions: Dict) -> None:
+    """Live-mode only: force-close positions held longer than LIVE_FORCE_EXIT_MIN.
+    Data shows paper 5-15min hold bucket is net-negative (-0.186 SOL, WR 52%);
+    1-5min buckets carry all the edge. If source hasn't signaled SELL by 5min,
+    we bail ourselves rather than ride into the losing zone."""
+    config = load_copy_config()
+    if config.trade_mode != "live" or not KEYPAIR_LOADED:
+        return
+    now_unix = int(time.time())
+    expire_s = LIVE_FORCE_EXIT_MIN * 60
+    stale_keys = [
+        key for key, pos in list(paper_positions.items())
+        if now_unix - pos.get("timestamp", now_unix) > expire_s
+    ]
+    if not stale_keys:
+        return
+
+    print(f"  ⏰ Force-exiting {len(stale_keys)} live position(s) past {LIVE_FORCE_EXIT_MIN}m hold")
+    for key in list(stale_keys):
+        pos = paper_positions.get(key)
+        if not pos: continue
+        age_s = now_unix - pos.get("timestamp", now_unix)
+        mint = pos.get("token_mint") or (key.split("::", 1)[1] if "::" in key else key)
+        src = pos.get("source_wallet") or (key.split("::", 1)[0] if "::" in key else "")
+        entry = pos.get("entry_price", 0.0)
+        scaled = pos.get("scaled_amount", 0.01)
+        print(f"    ⏰ force-SELL {mint[:16]}... age={age_s}s (source didn't sell within window)")
+        # Fire a synthetic SELL through the regular execution path so it goes
+        # through Jupiter + confirmation polling + real-fill price like any other trade.
+        trade = CopyTrade(
+            timestamp=now_unix, source_wallet=src, source_sig="",
+            our_wallet=config.user_wallet, action="SELL", token_mint=mint,
+            amount_sol=scaled, scaled_amount_sol=scaled,
+            source_price_sol=entry,  # placeholder; _fetch_actual_fill will overwrite
+        )
+        success = await execute_copy_trade(trade)
+        trade.status = "confirmed" if success else "failed"
+        if success:
+            pnl = record_paper_trade_pnl(trade, paper_positions)
+            if pnl is not None:
+                trade.realized_pnl_sol = pnl
+                print(f"    💰 force-exit closed pnl={pnl:+.6f}")
+            trade.error = "force_exit_5min"  # tag so analysis can separate these
+            save_paper_positions(paper_positions)
+            asyncio.create_task(_close_empty_ata(KEYPAIR_LOADED, mint))
+        else:
+            # If force-SELL fails to land, leave position tracked and try again next cycle
+            trade.error = f"force_exit_failed: {trade.error}"
+        save_copy_trade(trade)
+
+
 async def cleanup_stale_positions(paper_positions: Dict) -> None:
     """Auto-expire paper positions open longer than STALE_POSITION_HOURS.
     Records a SELL at entry_price (0% PnL) since we can't know the real exit price —
@@ -953,7 +1010,9 @@ async def polling_loop(paper_positions: Dict) -> None:
     """
     while True:
         try:
-            # Expire positions that have been open too long without a sell signal
+            # Live-mode: force-exit positions past 5-min hold (losing zone per paper)
+            await force_exit_live_stale(paper_positions)
+            # 24h cleanup for tracking hygiene (both modes)
             await cleanup_stale_positions(paper_positions)
 
             config = load_copy_config()
