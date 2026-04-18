@@ -26,7 +26,8 @@ from config import (
     DATA_DIR,
 )
 # Helius key exhausted Apr 17 — use publicnode as primary RPC for tx submission
-RPC_URL = "https://solana.publicnode.com"
+import os as _os
+RPC_URL = _os.getenv("QUICKNODE_RPC_URL") or "https://solana.publicnode.com"
 from solders.keypair import Keypair
 from solders.message import MessageV0
 from solders.transaction import VersionedTransaction

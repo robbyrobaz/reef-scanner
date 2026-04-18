@@ -22,8 +22,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import HELIUS_RPC_URL
 from solders.keypair import Keypair
 
-# Helius key exhausted Apr 17 — use publicnode as primary RPC
-RPC_URL = "https://solana.publicnode.com"
+# Helius exhausted Apr 17 → QuickNode primary (trial, 10M credits/mo) → publicnode fallback
+RPC_URL = os.getenv("QUICKNODE_RPC_URL") or "https://solana.publicnode.com"
 
 DRY_RUN = True
 

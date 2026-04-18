@@ -14,9 +14,21 @@ DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
 TELEGRAM_BOT_TOKEN=os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
-# ── Helius API ────────────────────────────────────────────────────────
+# ── Helius API (plan exhausted Apr 17) ────────────────────────────────
 HELIUS_BASE_URL = "https://api.helius.xyz/v0"
 HELIUS_RPC_URL = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
+
+# ── QuickNode (trial — 10M credits/mo, 15 req/s) ───────────────────────
+# Primary HTTP RPC. Used for getTransaction, getBalance, blockhash, ATA close.
+# NOT used for WebSocket subscriptions (15/s rate limit would kill 171 sub flood).
+# WS stays on publicnode. Fallback chain: QuickNode → publicnode → mainnet-beta.
+QUICKNODE_RPC_URL = os.getenv("QUICKNODE_RPC_URL", "")
+PRIMARY_RPC_URL = QUICKNODE_RPC_URL or "https://solana.publicnode.com"
+RPC_FALLBACK_CHAIN = [u for u in (
+    QUICKNODE_RPC_URL,
+    "https://solana.publicnode.com",
+    "https://api.mainnet-beta.solana.com",
+) if u]
 
 # ── Output ────────────────────────────────────────────────────────────
 DATA_DIR = "./data"

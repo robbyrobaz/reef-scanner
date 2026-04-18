@@ -38,6 +38,8 @@ from config import (
     COPY_MAX_ALLOC_SOL,
     COPY_TRADES_FILE,
     DATA_DIR,
+    RPC_FALLBACK_CHAIN,
+    PRIMARY_RPC_URL,
 )
 from copy_config import load_copy_config, save_copy_config, CopyConfig, CopyEntry, config_lock
 from swap_parser import parse_transaction_for_swaps, ParsedSwap
@@ -301,7 +303,7 @@ async def _get_token_decimals(mint: str) -> int:
     if mint in _DECIMALS_CACHE:
         return _DECIMALS_CACHE[mint]
     import aiohttp
-    for rpc in ["https://solana.publicnode.com", "https://api.mainnet-beta.solana.com"]:
+    for rpc in RPC_FALLBACK_CHAIN:
         try:
             async with aiohttp.ClientSession() as s:
                 async with s.post(rpc, json={
@@ -366,7 +368,7 @@ async def _fetch_actual_fill(sig: str, action: str, token_mint: str, wallet_pubk
     if not sig or sig in ("confirmed", "DRY_RUN", "DRY_RUN_SIG"):
         return None
     import aiohttp
-    for rpc in ["https://solana.publicnode.com", "https://api.mainnet-beta.solana.com"]:
+    for rpc in RPC_FALLBACK_CHAIN:
         try:
             async with aiohttp.ClientSession() as s:
                 async with s.post(rpc, json={
@@ -455,9 +457,9 @@ async def _close_empty_ata(keypair, token_mint: str) -> bool:
             ],
             data=bytes([9]),
         )
-        # Fresh blockhash — publicnode primary (mainnet-beta is rate-limited)
+        # Fresh blockhash — PRIMARY_RPC (QuickNode) with fallback to publicnode
         async with aiohttp.ClientSession() as s:
-            async with s.post("https://solana.publicnode.com", json={
+            async with s.post(PRIMARY_RPC_URL, json={
                 "jsonrpc":"2.0","id":1,"method":"getLatestBlockhash","params":[{"commitment":"confirmed"}],
             }, timeout=aiohttp.ClientTimeout(total=5)) as resp:
                 if resp.status != 200: return False
@@ -465,7 +467,7 @@ async def _close_empty_ata(keypair, token_mint: str) -> bool:
             from solders.hash import Hash
             msg = MessageV0.try_compile(owner, [ix], [], Hash.from_string(blockhash_str))
             tx = VersionedTransaction(msg, [keypair])
-            async with s.post("https://solana.publicnode.com", json={
+            async with s.post(PRIMARY_RPC_URL, json={
                 "jsonrpc":"2.0","id":1,"method":"sendTransaction",
                 "params":[base64.b64encode(bytes(tx)).decode(),
                           {"encoding":"base64","skipPreFlight":True,"maxRetries":3}],
@@ -483,7 +485,7 @@ async def _wait_for_confirmation(sig: str, timeout_s: float = 45.0) -> bool:
     if not sig or sig in ("confirmed", "DRY_RUN", "DRY_RUN_SIG"):
         return True  # PumpSwap confirms internally; DRY_RUN sentinels pass through
     import aiohttp
-    rpcs = ["https://solana.publicnode.com", "https://api.mainnet-beta.solana.com"]
+    rpcs = RPC_FALLBACK_CHAIN
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         for rpc in rpcs:
@@ -1220,7 +1222,7 @@ async def _sweep_orphans_and_stale(paper_positions: Dict) -> None:
         for prog in ["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
                      "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"]:
             try:
-                async with s.post("https://solana.publicnode.com", json={
+                async with s.post(PRIMARY_RPC_URL, json={
                     "jsonrpc": "2.0", "id": 1, "method": "getTokenAccountsByOwner",
                     "params": [wallet, {"programId": prog}, {"encoding": "jsonParsed"}]
                 }, timeout=aiohttp.ClientTimeout(total=15)) as r:
@@ -1322,7 +1324,7 @@ async def sweep_ghost_positions(paper_positions: Dict) -> None:
     to_remove = []
     # Parallel on-chain balance check for all eligible positions.
     # publicnode-first with mainnet-beta fallback (matches executors).
-    RPCS = ["https://solana.publicnode.com", "https://api.mainnet-beta.solana.com"]
+    RPCS = RPC_FALLBACK_CHAIN
 
     async def check_balance(mint: str) -> int | None:
         """Return held amount (0 = ghost) or None if couldn't verify."""

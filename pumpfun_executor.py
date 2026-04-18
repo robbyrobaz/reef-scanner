@@ -18,7 +18,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import HELIUS_API_KEY, HELIUS_RPC_URL
 # Helius key exhausted Apr 17 — use publicnode as primary RPC for tx submission.
 # Restore to HELIUS_RPC_URL after topping up Helius.
-RPC_URL = "https://solana.publicnode.com"
+import os as _os
+RPC_URL = _os.getenv("QUICKNODE_RPC_URL") or "https://solana.publicnode.com"
 from solders.keypair import Keypair
 from solders.transaction import VersionedTransaction
 import aiohttp

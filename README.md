@@ -182,7 +182,9 @@ ACTIVITY_WINDOW_DAYS = 30
 
 | Component | Tool |
 |-----------|------|
-| RPC | `solana-rpc.publicnode.com` (primary, WS + HTTP), mainnet-beta fallback. Helius plan exhausted — do NOT use. |
+| RPC (HTTP) | **QuickNode** (trial, 10M credits/mo, 15 req/s) → publicnode → mainnet-beta fallback. Env `QUICKNODE_RPC_URL`. |
+| RPC (WebSocket) | `wss://solana-rpc.publicnode.com` — NOT QuickNode (QN rate-limits subscribes at 15/s which would kill our 171-wallet sub flood) |
+| Archival tx lookup | QuickNode (publicnode prunes anything >~1h) |
 | Async | `asyncio` + `aiohttp` |
 | Data | CSV files |
 | Scheduling | Hermes MCP cron |
