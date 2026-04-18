@@ -75,6 +75,12 @@ STALE_POSITION_HOURS = float(os.getenv("STALE_POSITION_HOURS", "24"))
 # Set LIVE_FORCE_EXIT_MIN env var if you want force-exit back (in minutes).
 LIVE_FORCE_EXIT_MIN = float(os.getenv("LIVE_FORCE_EXIT_MIN", "0"))  # 0 = disabled
 
+# Watch-mode slip simulation: after a source signal, wait this many seconds
+# then fetch a Jupiter quote to simulate what we'd have actually filled at.
+# 4s matches our observed live execution lag (2-6s range). Set to 0 to disable
+# and fall back to source-price-as-fill (old behavior).
+WATCH_SIM_LAG_S = float(os.getenv("WATCH_SIM_LAG_S", "4.0"))
+
 # ── Shared state ─────────────────────────────────────────────────────────────
 # Dedup: sigs seen by any listener (prevents double-execution across WS + polling)
 # Uses a parallel deque to maintain insertion order for proper FIFO eviction.
@@ -266,6 +272,50 @@ SOL_MINT = "So11111111111111111111111111111111111111112"
 # as on-chain confirmation — txs die in mempool all the time. Only PumpSwap SDK
 # confirms internally. Poll ourselves for the other two paths so CSV "confirmed"
 # status matches reality.
+async def _simulate_live_quote_price(action: str, token_mint: str, amount_sol: float) -> Optional[float]:
+    """Simulate what Jupiter would fill AT THIS MOMENT for the given swap.
+    Used by watch-mode to measure real slip without spending SOL.
+    Returns SOL/token price, or None if Jupiter can't route.
+    For BUY: price = inAmount/outAmount / 1e9 (SOL per token, higher = worse fill).
+    For SELL: price = outAmount/inAmount / 1e9 (SOL per token received, higher = better fill).
+    """
+    if amount_sol <= 0 or not token_mint:
+        return None
+    import aiohttp
+    in_mint = SOL_MINT if action == "BUY" else token_mint
+    out_mint = token_mint if action == "BUY" else SOL_MINT
+    # For SELL, the "amount" is tokens-in; we don't know the token decimals here
+    # without a query. Use the source's scaled_amount_sol as a proxy for size —
+    # Jupiter quotes return per-token price regardless of exact size for normal
+    # trade sizes.
+    amount_lamports = int(amount_sol * 1e9) if action == "BUY" else int(amount_sol * 1e9)
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get("https://api.jup.ag/swap/v1/quote", params={
+                "inputMint": in_mint, "outputMint": out_mint,
+                "amount": amount_lamports, "slippageBps": 500,
+            }, timeout=aiohttp.ClientTimeout(total=6)) as resp:
+                if resp.status != 200:
+                    return None
+                q = await resp.json()
+                in_a = int(q.get("inAmount", 0) or 0)
+                out_a = int(q.get("outAmount", 0) or 0)
+                if in_a <= 0 or out_a <= 0:
+                    return None
+                # SOL-per-token: for BUY inMint=SOL (9 decimals), outMint=token (usually 6)
+                # For SELL swap SOL-per-token is SOL_out / tokens_in
+                if action == "BUY":
+                    # in_a lamports SOL / out_a token base units = SOL/token in (lam / base_unit)
+                    # To get SOL-per-token uiAmount, need to normalize decimals. For accuracy
+                    # without fetching mint decimals, leave at raw ratio — the slip COMPARISON
+                    # with source_price (which was computed the same way by swap_parser) is valid.
+                    return (in_a / out_a) / 1e9
+                else:
+                    return (out_a / in_a) / 1e9
+    except Exception:
+        return None
+
+
 async def _fetch_actual_fill(sig: str, action: str, token_mint: str, wallet_pubkey: str) -> Optional[float]:
     """
     Read a confirmed tx from chain and compute the ACTUAL price we filled at.
@@ -550,7 +600,21 @@ async def _execute_signal(
             print(f"  ⏭  {tag}LIVE BUY SKIP — already holding {token_mint[:16]}... from this wallet")
             return
     if not _live:
-        trade.our_price_sol = price_sol  # paper: assume we'd get the same price as source
+        # For WATCH mode: simulate the real execution lag by fetching a Jupiter
+        # quote ~4s after the source signal. This captures actual slip the way
+        # live would experience it, without spending SOL. Set env WATCH_SIM_LAG_S=0
+        # to disable (and fall back to source-price-as-fill paper behavior).
+        trade.our_price_sol = price_sol  # start with source price as fallback
+        if is_watch and WATCH_SIM_LAG_S > 0:
+            await asyncio.sleep(WATCH_SIM_LAG_S)
+            simulated_price = await _simulate_live_quote_price(action, token_mint, scaled)
+            if simulated_price and simulated_price > 0:
+                trade.our_price_sol = simulated_price
+                slip_pct = ((simulated_price - price_sol) / price_sol * 100) if price_sol > 0 else 0
+                # For SELLs, positive slip means we got MORE SOL (good);
+                # for BUYs, positive slip means we paid MORE per token (bad).
+                if abs(slip_pct) >= 1.0:
+                    print(f"    📊 watch-sim slip {action} {token_mint[:16]}...: {slip_pct:+.1f}% (src {price_sol:.3e} vs sim {simulated_price:.3e})")
         pnl = record_paper_trade_pnl(trade, paper_positions)
         if pnl is None:
             # No valid position to open/close — skip recording this trade entirely
