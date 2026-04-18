@@ -272,6 +272,12 @@ async def get_wallet_stats():
         tail_rois.sort()
         p95 = tail_rois[int(len(tail_rois)*0.95)] if tail_rois else 0
         max_roi = tail_rois[-1] if tail_rois else 0
+        # Per-trade average PnL — the key strategy metric. Grind-positive
+        # strategies (this one) should show a small positive number here net of
+        # fees. If live diverges below watch, execution is eating the edge.
+        # Units: milliSOL per closed SELL (sell = round-trip close).
+        pnl_per_sell_msol = (pnl / sells * 1000.0) if sells > 0 else 0.0
+
         return {
             "pnl": pnl,
             "trades": n,
@@ -286,6 +292,7 @@ async def get_wallet_stats():
             "avg_loss": (loss_sum / len(losses)) if losses else 0,
             "best": max((_trade_pnl(t) for t in gains + losses), default=0),
             "worst": min((_trade_pnl(t) for t in gains + losses), default=0),
+            "pnl_per_sell_msol": pnl_per_sell_msol,
             # Tail metrics — the moonshot-counting stats
             "p95_roi": p95,       # 95th percentile ROI (0.1 = +10%, 1.0 = +100%)
             "max_roi": max_roi,   # best single-trade ROI

@@ -159,6 +159,7 @@
       <div class="sc-title"><span class="dot" style="background:var(--green)"></span> LIVE TRADING</div>
       <div class="sc-pnl" id="cs-live-pnl">—</div>
       <div class="sc-sub">Closed PnL (SOL) &nbsp;|&nbsp; Balance Δ: <strong id="cs-bal-pnl">—</strong></div>
+      <div class="sc-sub" style="margin-top:6px">Avg: <strong id="cs-live-mst">—</strong> mSOL/trade &nbsp;|&nbsp; Gap vs Watch: <strong id="cs-live-gap">—</strong></div>
       <div class="sc-grid">
         <div class="sc-stat"><div class="sc-stat-val" id="cs-live-wr">—</div><div class="sc-stat-lbl">Win Rate</div></div>
         <div class="sc-stat"><div class="sc-stat-val" id="cs-live-pf">—</div><div class="sc-stat-lbl">Profit Factor</div></div>
@@ -177,6 +178,7 @@
       <div class="sc-title"><span class="dot" style="background:var(--orange)"></span> PAPER TRADING <span class="sub" style="color:var(--muted);font-weight:normal">(historical backtest, pre-Apr 17)</span></div>
       <div class="sc-pnl" id="cs-paper-pnl">—</div>
       <div class="sc-sub">Simulated Closed PnL (SOL)</div>
+      <div class="sc-sub" style="margin-top:6px">Avg: <strong id="cs-paper-mst">—</strong> mSOL/trade</div>
       <div class="sc-grid">
         <div class="sc-stat"><div class="sc-stat-val" id="cs-paper-wr">—</div><div class="sc-stat-lbl">Win Rate</div></div>
         <div class="sc-stat"><div class="sc-stat-val" id="cs-paper-pf">—</div><div class="sc-stat-lbl">Profit Factor</div></div>
@@ -194,6 +196,7 @@
       <div class="sc-title"><span class="dot" style="background:var(--amber)"></span> WATCH LIST <span class="sub" style="color:var(--muted);font-weight:normal">(100 wallets evaluated live, not traded)</span></div>
       <div class="sc-pnl" id="cs-watch-pnl">—</div>
       <div class="sc-sub">Simulated PnL if we had copied them too</div>
+      <div class="sc-sub" style="margin-top:6px">Avg: <strong id="cs-watch-mst">—</strong> mSOL/trade &nbsp;<span style="color:var(--muted)">(the benchmark for live)</span></div>
       <div class="sc-grid">
         <div class="sc-stat"><div class="sc-stat-val" id="cs-watch-wr">—</div><div class="sc-stat-lbl">Win Rate</div></div>
         <div class="sc-stat"><div class="sc-stat-val" id="cs-watch-pf">—</div><div class="sc-stat-lbl">Profit Factor</div></div>
@@ -214,6 +217,7 @@
       <div class="sc-title"><span class="dot" style="background:#8b5cf6"></span> LARGE ORDER WATCH <span class="sub" style="color:var(--muted);font-weight:normal">(62 large-buy-placing wallets, no size pre-filter)</span></div>
       <div class="sc-pnl" id="cs-wl-pnl">—</div>
       <div class="sc-sub">Simulated PnL — different wallet universe, compare to main watch</div>
+      <div class="sc-sub" style="margin-top:6px">Avg: <strong id="cs-wl-mst">—</strong> mSOL/trade</div>
       <div class="sc-grid">
         <div class="sc-stat"><div class="sc-stat-val" id="cs-wl-wr">—</div><div class="sc-stat-lbl">Win Rate</div></div>
         <div class="sc-stat"><div class="sc-stat-val" id="cs-wl-pf">—</div><div class="sc-stat-lbl">Profit Factor</div></div>
@@ -1012,6 +1016,29 @@ async function loadCopyStats() {
     fill('cs-paper', s.paper||{});
     fill('cs-watch', s.watch||{});
     fill('cs-wl', s.watch_large||{});
+
+    // mSOL-per-trade (the grind-positive benchmark). Show on each card.
+    // For live: also show the gap vs watch — if live < watch significantly,
+    // execution is eating the edge (kill signal).
+    const mst = (d) => Number(d.pnl_per_sell_msol || 0);
+    const mstFmt = (v) => (v >= 0 ? '+' : '') + v.toFixed(3);
+    const liveMst = mst(s.live||{}), watchMst = mst(s.watch||{});
+    const paperMst = mst(s.paper||{}), wlMst = mst(s.watch_large||{});
+    for (const [id, v] of [['cs-live-mst', liveMst], ['cs-paper-mst', paperMst],
+                            ['cs-watch-mst', watchMst], ['cs-wl-mst', wlMst]]) {
+      if ($(id)) {
+        $(id).textContent = mstFmt(v);
+        $(id).style.color = v > 0 ? 'var(--green)' : v < 0 ? 'var(--red)' : '';
+      }
+    }
+    if ($('cs-live-gap') && (s.live||{}).sells > 0) {
+      const gap = liveMst - watchMst;
+      $('cs-live-gap').textContent = mstFmt(gap) + ' mSOL';
+      // Alert colour: if live lags watch by >0.5 mSOL, execution cost is eating edge
+      $('cs-live-gap').style.color = gap < -0.5 ? 'var(--red)' : gap < 0 ? 'var(--amber)' : 'var(--green)';
+    } else if ($('cs-live-gap')) {
+      $('cs-live-gap').textContent = '—';
+    }
 
     // Open positions: engine's live open (CSV BUY-SELL pairs unclosed)
     $('cs-live-open').textContent = fmt((s.live||{}).open||0);
