@@ -988,6 +988,18 @@ async def force_exit_live_stale(paper_positions: Dict) -> None:
         save_copy_trade(trade)
 
 
+async def ghost_sweep_loop(paper_positions: Dict) -> None:
+    """Dedicated fast-ticking task for the ghost sweep. Polling loop with
+    100 watched wallets takes ~100s per iteration; sweep inside it runs too
+    slowly to catch fresh ghosts. Separate task ticks every 20s."""
+    while True:
+        try:
+            await sweep_ghost_positions(paper_positions)
+        except Exception as e:
+            print(f"  ⚠️ ghost_sweep_loop error: {e}")
+        await asyncio.sleep(20)
+
+
 async def sweep_ghost_positions(paper_positions: Dict) -> None:
     """Safety-net: find live-mode open positions where the claimed BUY tx
     doesn't have our wallet holding any of the token, after enough time
@@ -1005,32 +1017,50 @@ async def sweep_ghost_positions(paper_positions: Dict) -> None:
     import aiohttp
     addr = str(KEYPAIR_LOADED.pubkey())
     to_remove = []
-    # Use same publicnode-first, mainnet-beta-fallback strategy the executors use.
-    # Direct mainnet-beta calls fail ~90% of the time under load; publicnode is
-    # more reliable. Retry across RPCs on failure rather than silently skipping.
+    # Parallel on-chain balance check for all eligible positions.
+    # publicnode-first with mainnet-beta fallback (matches executors).
     RPCS = ["https://solana.publicnode.com", "https://api.mainnet-beta.solana.com"]
-    for key, pos in list(paper_positions.items()):
-        ts = pos.get("timestamp", now)
-        if now - ts < GRACE_S: continue
-        mint = pos.get("token_mint") or (key.split("::", 1)[1] if "::" in key else key)
-        amt = None  # None = could not verify (keep position); 0 = verified empty (ghost)
+
+    async def check_balance(mint: str) -> int | None:
+        """Return held amount (0 = ghost) or None if couldn't verify."""
         for rpc in RPCS:
             try:
                 async with aiohttp.ClientSession() as s:
                     async with s.post(rpc, json={
                         "jsonrpc": "2.0", "id": 1, "method": "getTokenAccountsByOwner",
                         "params": [addr, {"mint": mint}, {"encoding": "jsonParsed"}],
-                    }, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    }, timeout=aiohttp.ClientTimeout(total=8)) as resp:
                         if resp.status != 200: continue
                         d = await resp.json()
                         total = 0
                         for a in d.get("result", {}).get("value", []):
                             info = a.get("account", {}).get("data", {}).get("parsed", {}).get("info", {})
                             total += int(info.get("tokenAmount", {}).get("amount", 0) or 0)
-                        amt = total
-                        break  # got a definitive answer
+                        return total
             except Exception:
                 continue
+        return None
+
+    eligible = []
+    for key, pos in list(paper_positions.items()):
+        ts = pos.get("timestamp", now)
+        if now - ts < GRACE_S: continue
+        # Skip watch-mode positions — they're SIMULATIONS, not real buys,
+        # so they'll always show 0 on-chain. Only sweep live-copy positions.
+        src = pos.get("source_wallet") or (key.split("::", 1)[0] if "::" in key else "")
+        src_entry = config.copies.get(src)
+        if src_entry and src_entry.copy_mode == "watch":
+            continue
+        mint = pos.get("token_mint") or (key.split("::", 1)[1] if "::" in key else key)
+        eligible.append((key, pos, mint))
+    if not eligible:
+        return
+    # Parallel: all eligible checked in one gather
+    results = await asyncio.gather(*[check_balance(mint) for _, _, mint in eligible],
+                                     return_exceptions=True)
+    for (key, pos, mint), amt in zip(eligible, results):
+        if isinstance(amt, Exception) or amt is None:
+            continue
         if amt == 0:
             to_remove.append((key, pos, mint))
 
@@ -1110,12 +1140,9 @@ async def polling_loop(paper_positions: Dict) -> None:
     """
     while True:
         try:
-            # Safety-net: close live positions whose on-chain tokens are missing
-            # (inline anti-ghost check can miss forked-out txs that briefly confirmed)
-            await sweep_ghost_positions(paper_positions)
-            # Live-mode only: force-exit positions past LIVE_FORCE_EXIT_MIN (disabled by default)
+            # force-exit + 24h cleanup still ride the polling cadence
+            # (ghost-sweep moved to its own fast-ticking task — see ghost_sweep_loop)
             await force_exit_live_stale(paper_positions)
-            # 24h cleanup for tracking hygiene (both modes)
             await cleanup_stale_positions(paper_positions)
 
             config = load_copy_config()
@@ -1263,6 +1290,7 @@ async def run_engine() -> None:
         pumpportal_ws_listener(),        # fast: ms latency for bonding-curve
         polling_loop(paper_positions),   # slow: fallback for non-pump / WS gaps
         consensus_processor(paper_positions),  # fires buffered signals
+        ghost_sweep_loop(paper_positions),     # 20s tick: close orphaned live positions
     )
 
 
