@@ -988,6 +988,70 @@ async def force_exit_live_stale(paper_positions: Dict) -> None:
         save_copy_trade(trade)
 
 
+async def sweep_ghost_positions(paper_positions: Dict) -> None:
+    """Safety-net: find live-mode open positions where the claimed BUY tx
+    doesn't have our wallet holding any of the token, after enough time
+    has passed for a legit fill to settle. Inline anti-ghost check sometimes
+    misses forked-out txs that briefly appeared confirmed — this sweep
+    catches them ~60s later and closes them.
+
+    Only operates on positions that were opened in LIVE mode (has a real
+    our_sig, not a DRY_RUN/"confirmed" sentinel)."""
+    config = load_copy_config()
+    if config.trade_mode != "live" or not KEYPAIR_LOADED:
+        return
+    now = int(time.time())
+    GRACE_S = 60  # wait 60s before declaring a position a ghost
+    import aiohttp
+    addr = str(KEYPAIR_LOADED.pubkey())
+    to_remove = []
+    for key, pos in list(paper_positions.items()):
+        ts = pos.get("timestamp", now)
+        if now - ts < GRACE_S: continue
+        mint = pos.get("token_mint") or (key.split("::", 1)[1] if "::" in key else key)
+        # Check our actual on-chain balance for this mint
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.post("https://api.mainnet-beta.solana.com", json={
+                    "jsonrpc": "2.0", "id": 1, "method": "getTokenAccountsByOwner",
+                    "params": [addr, {"mint": mint}, {"encoding": "jsonParsed"}],
+                }, timeout=aiohttp.ClientTimeout(total=8)) as resp:
+                    if resp.status != 200: continue
+                    d = await resp.json()
+                    amt = 0
+                    for a in d.get("result", {}).get("value", []):
+                        info = a.get("account", {}).get("data", {}).get("parsed", {}).get("info", {})
+                        amt += int(info.get("tokenAmount", {}).get("amount", 0) or 0)
+                    if amt == 0:
+                        to_remove.append((key, pos, mint))
+        except Exception:
+            continue  # can't verify → leave alone (better to keep than to falsely kill)
+
+    if not to_remove:
+        return
+    print(f"  👻 Ghost sweep: {len(to_remove)} live positions have no on-chain tokens — closing")
+    for key, pos, mint in to_remove:
+        age = now - pos.get("timestamp", now)
+        src = pos.get("source_wallet") or (key.split("::", 1)[0] if "::" in key else "")
+        entry = pos.get("entry_price", 0.0)
+        scaled = pos.get("scaled_amount", 0.01)
+        print(f"    👻 ghost close {mint[:16]}... age={age}s (tx didn't deliver tokens)")
+        # Pop from paper_positions
+        paper_positions.pop(key, None)
+        # Write a reconcile-SELL row so dashboard round-trip matcher closes it
+        trade = CopyTrade(
+            timestamp=now, source_wallet=src, source_sig="",
+            our_wallet=config.user_wallet, action="SELL", token_mint=mint,
+            amount_sol=scaled, scaled_amount_sol=scaled,
+            source_price_sol=entry, our_price_sol=entry,
+            status="expired",
+            error="ghost_sweep: no on-chain tokens after 60s grace",
+            realized_pnl_sol=0.0,
+        )
+        save_copy_trade(trade)
+    save_paper_positions(paper_positions)
+
+
 async def cleanup_stale_positions(paper_positions: Dict) -> None:
     """Auto-expire paper positions open longer than STALE_POSITION_HOURS.
     Records a SELL at entry_price (0% PnL) since we can't know the real exit price —
@@ -1039,7 +1103,10 @@ async def polling_loop(paper_positions: Dict) -> None:
     """
     while True:
         try:
-            # Live-mode: force-exit positions past 5-min hold (losing zone per paper)
+            # Safety-net: close live positions whose on-chain tokens are missing
+            # (inline anti-ghost check can miss forked-out txs that briefly confirmed)
+            await sweep_ghost_positions(paper_positions)
+            # Live-mode only: force-exit positions past LIVE_FORCE_EXIT_MIN (disabled by default)
             await force_exit_live_stale(paper_positions)
             # 24h cleanup for tracking hygiene (both modes)
             await cleanup_stale_positions(paper_positions)
