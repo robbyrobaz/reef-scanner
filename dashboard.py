@@ -253,6 +253,25 @@ async def get_wallet_stats():
                 open_keys[k] = True
             elif t.get("action","").upper() == "SELL":
                 open_keys.pop(k, None)
+        # Tail-outcome tracking — ROI per closed position, to surface moonshots.
+        # A "rip" is a round-trip ROI >= 10× capital deployed (0.01 SOL → >= 0.10 SOL profit).
+        # We measure per-SELL ROI: pnl / basis (basis = scaled_amount_sol of the BUY leg,
+        # which is always 0.01 SOL in this engine).
+        tail_rois = []
+        rips_10x = rips_50x = rips_100x = 0
+        for t in trades_list:
+            if t.get("action","").upper() != "SELL": continue
+            basis = float(t.get("scaled_amount_sol") or 0.01) or 0.01
+            trade_pnl = _trade_pnl(t)
+            if trade_pnl == 0: continue
+            roi = trade_pnl / basis  # 1.0 = doubled, 10.0 = 10×
+            tail_rois.append(roi)
+            if roi >= 9: rips_10x += 1  # ≥10× means pnl ≥ 9× basis (entry basis is the 10th x)
+            if roi >= 49: rips_50x += 1
+            if roi >= 99: rips_100x += 1
+        tail_rois.sort()
+        p95 = tail_rois[int(len(tail_rois)*0.95)] if tail_rois else 0
+        max_roi = tail_rois[-1] if tail_rois else 0
         return {
             "pnl": pnl,
             "trades": n,
@@ -267,6 +286,12 @@ async def get_wallet_stats():
             "avg_loss": (loss_sum / len(losses)) if losses else 0,
             "best": max((_trade_pnl(t) for t in gains + losses), default=0),
             "worst": min((_trade_pnl(t) for t in gains + losses), default=0),
+            # Tail metrics — the moonshot-counting stats
+            "p95_roi": p95,       # 95th percentile ROI (0.1 = +10%, 1.0 = +100%)
+            "max_roi": max_roi,   # best single-trade ROI
+            "rips_10x": rips_10x,
+            "rips_50x": rips_50x,
+            "rips_100x": rips_100x,
         }
 
     # Compute last_updated from most recent trade timestamp

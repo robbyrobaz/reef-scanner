@@ -204,7 +204,10 @@
         <div class="sc-stat"><div class="sc-stat-val" id="cs-watch-losses">—</div><div class="sc-stat-lbl">Losses</div></div>
         <div class="sc-stat"><div class="sc-stat-val" id="cs-watch-best">—</div><div class="sc-stat-lbl">Best</div></div>
         <div class="sc-stat"><div class="sc-stat-val" id="cs-watch-worst">—</div><div class="sc-stat-lbl">Worst</div></div>
-        <div class="sc-stat"><div class="sc-stat-val" id="cs-watch-avgwin">—</div><div class="sc-stat-lbl">Avg Win</div></div>
+        <div class="sc-stat"><div class="sc-stat-val" id="cs-watch-rips10">—</div><div class="sc-stat-lbl">≥10× rips</div></div>
+        <div class="sc-stat"><div class="sc-stat-val" id="cs-watch-rips50">—</div><div class="sc-stat-lbl">≥50× rips</div></div>
+        <div class="sc-stat"><div class="sc-stat-val" id="cs-watch-rips100">—</div><div class="sc-stat-lbl">≥100× rips</div></div>
+        <div class="sc-stat"><div class="sc-stat-val" id="cs-watch-maxroi">—</div><div class="sc-stat-lbl">Max ROI</div></div>
       </div>
     </div>
     <div class="sc" id="sc-watchlarge">
@@ -221,6 +224,10 @@
         <div class="sc-stat"><div class="sc-stat-val" id="cs-wl-losses">—</div><div class="sc-stat-lbl">Losses</div></div>
         <div class="sc-stat"><div class="sc-stat-val" id="cs-wl-best">—</div><div class="sc-stat-lbl">Best</div></div>
         <div class="sc-stat"><div class="sc-stat-val" id="cs-wl-worst">—</div><div class="sc-stat-lbl">Worst</div></div>
+        <div class="sc-stat"><div class="sc-stat-val" id="cs-wl-rips10">—</div><div class="sc-stat-lbl">≥10× rips</div></div>
+        <div class="sc-stat"><div class="sc-stat-val" id="cs-wl-rips50">—</div><div class="sc-stat-lbl">≥50× rips</div></div>
+        <div class="sc-stat"><div class="sc-stat-val" id="cs-wl-rips100">—</div><div class="sc-stat-lbl">≥100× rips</div></div>
+        <div class="sc-stat"><div class="sc-stat-val" id="cs-wl-maxroi">—</div><div class="sc-stat-lbl">Max ROI</div></div>
       </div>
     </div>
   </div>
@@ -988,6 +995,17 @@ async function loadCopyStats() {
       $(prefix+'-best').style.color = 'var(--green)';
       $(prefix+'-worst').textContent = sf(d.worst);
       $(prefix+'-worst').style.color = d.worst < 0 ? 'var(--red)' : '';
+      // Tail metrics — only update if elements exist on the card
+      if ($(prefix+'-rips10')) {
+        $(prefix+'-rips10').textContent = fmt(d.rips_10x||0);
+        $(prefix+'-rips10').style.color = d.rips_10x > 0 ? 'var(--green)' : '';
+        $(prefix+'-rips50').textContent = fmt(d.rips_50x||0);
+        $(prefix+'-rips50').style.color = d.rips_50x > 0 ? 'var(--green)' : '';
+        $(prefix+'-rips100').textContent = fmt(d.rips_100x||0);
+        $(prefix+'-rips100').style.color = d.rips_100x > 0 ? 'var(--green)' : '';
+        $(prefix+'-maxroi').textContent = (d.max_roi ? d.max_roi.toFixed(1)+'×' : '—');
+        $(prefix+'-maxroi').style.color = d.max_roi > 1 ? 'var(--green)' : '';
+      }
     }
 
     fill('cs-live', s.live||{});
