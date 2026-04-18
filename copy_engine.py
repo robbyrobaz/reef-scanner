@@ -84,6 +84,15 @@ WATCH_SIM_LAG_S = float(os.getenv("WATCH_SIM_LAG_S", "4.0"))
 # above source price. 5% is the default — stops us from chasing already-pumped
 # entries while allowing normal drift. Set env to tune.
 LIVE_SLIP_GATE_PCT = float(os.getenv("LIVE_SLIP_GATE_PCT", "5.0"))
+# Proportional alloc ratio: our copy size scales with source trade size.
+# Default 0.001 = 0.1% of source. Combined with per-wallet entry.alloc_sol as
+# floor and COPY_MAX_ALLOC_SOL as cap, this bumps conviction plays to 0.05 SOL
+# while keeping routine small-basis trades at the 0.01 floor.
+PROP_ALLOC_RATIO = float(os.getenv("PROP_ALLOC_RATIO", "0.001"))
+# Hard cap on per-trade alloc regardless of source size. 0.05 SOL ~ $12 per
+# trade is the ceiling for our wallet size (~0.2 SOL); raise via env when bank
+# grows. Overrides COPY_MAX_ALLOC_SOL (which is 10 SOL = too generous for us).
+PROP_ALLOC_CAP = float(os.getenv("PROP_ALLOC_CAP", "0.05"))
 
 # ── Shared state ─────────────────────────────────────────────────────────────
 # Dedup: sigs seen by any listener (prevents double-execution across WS + polling)
@@ -590,9 +599,18 @@ async def _execute_signal(
     if not entry or not entry.enabled:
         return
 
-    scale  = min(1.0, entry.alloc_sol / max(sol_amt, 0.0001))
-    scaled = round(sol_amt * scale, 9)
-    scaled = max(COPY_MIN_ALLOC_SOL, min(COPY_MAX_ALLOC_SOL, scaled))
+    # Proportional alloc: scale our copy size with the source's conviction.
+    # alloc = min(COPY_MAX_ALLOC_SOL, max(entry.alloc_sol, source_sol * PROP_RATIO))
+    # Default map at PROP_RATIO=0.001, floor 0.01, cap 0.05:
+    #   source 0.5 SOL → 0.01  (floor, their usual)
+    #   source 10 SOL  → 0.01  (still floor)
+    #   source 30 SOL  → 0.03  (mid conviction)
+    #   source 50+ SOL → 0.05  (cap, max conviction)
+    # This only fires for whales trading ≥10 SOL — most trades stay at floor.
+    prop_alloc = sol_amt * PROP_ALLOC_RATIO
+    scaled = max(entry.alloc_sol, prop_alloc)
+    scaled = max(COPY_MIN_ALLOC_SOL, min(PROP_ALLOC_CAP, scaled))
+    scaled = round(scaled, 9)
 
     trade = CopyTrade(
         timestamp=int(time.time()),
@@ -1162,6 +1180,128 @@ async def ghost_sweep_loop(paper_positions: Dict) -> None:
         await asyncio.sleep(20)
 
 
+# ── Orphan sweep: auto-liquidate stale SPL holdings ────────────────────────────
+ORPHAN_SWEEP_INTERVAL_S = float(os.getenv("ORPHAN_SWEEP_INTERVAL_S", "1800"))  # 30 min
+# Age at which a live position is considered stale and we force-close via Jupiter
+# SELL. Default 6h — source hasn't signaled a sell in 6h means they're bagholding
+# too (or we missed their signal). Disable by setting to 0.
+STALE_POSITION_MAX_H = float(os.getenv("STALE_POSITION_MAX_H", "6"))
+
+
+async def orphan_sweep_loop(paper_positions: Dict) -> None:
+    """Every 30 min: find SPL tokens held in the hot wallet that are NOT
+    tracked in paper_positions (orphans from past sessions or failed closes).
+    Also force-exit positions older than STALE_POSITION_MAX_H. Fires Jupiter
+    SELLs via the same execute_copy_trade path so fills, fees, and CSV rows
+    match regular trades.
+
+    Disabled unless trade_mode=live and keypair loaded."""
+    # Wait a bit before first run to avoid colliding with startup subs.
+    await asyncio.sleep(120)
+    while True:
+        try:
+            await _sweep_orphans_and_stale(paper_positions)
+        except Exception as e:
+            print(f"  ⚠️ orphan_sweep_loop error: {e}")
+        await asyncio.sleep(ORPHAN_SWEEP_INTERVAL_S)
+
+
+async def _sweep_orphans_and_stale(paper_positions: Dict) -> None:
+    config = load_copy_config()
+    if config.trade_mode != "live" or not KEYPAIR_LOADED:
+        return
+    import aiohttp
+    wallet = str(KEYPAIR_LOADED.pubkey())
+
+    # 1. Fetch actual SPL balances (both Token + Token-2022 programs)
+    held = {}  # mint -> ui_amount
+    async with aiohttp.ClientSession() as s:
+        for prog in ["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                     "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"]:
+            try:
+                async with s.post("https://solana.publicnode.com", json={
+                    "jsonrpc": "2.0", "id": 1, "method": "getTokenAccountsByOwner",
+                    "params": [wallet, {"programId": prog}, {"encoding": "jsonParsed"}]
+                }, timeout=aiohttp.ClientTimeout(total=15)) as r:
+                    d = await r.json()
+                for acc in d.get("result", {}).get("value", []):
+                    info = acc.get("account", {}).get("data", {}).get("parsed", {}).get("info", {})
+                    mint = info.get("mint")
+                    ui = float(info.get("tokenAmount", {}).get("uiAmount") or 0)
+                    if mint and ui > 0:
+                        held[mint] = ui
+            except Exception as e:
+                print(f"  ⚠️ orphan-sweep RPC err ({prog[:10]}): {type(e).__name__}")
+
+    if not held:
+        return
+
+    # 2. Identify orphans = held mints NOT in paper_positions
+    tracked_mints = {k.split("::", 1)[1] for k in paper_positions.keys() if "::" in k}
+    orphans = [m for m in held if m not in tracked_mints]
+
+    # 3. Identify stale = held mints tracked, but position older than threshold
+    now = int(time.time())
+    stale_age_s = STALE_POSITION_MAX_H * 3600
+    stale = []
+    if STALE_POSITION_MAX_H > 0:
+        for key, pos in paper_positions.items():
+            if "::" not in key: continue
+            mint = key.split("::", 1)[1]
+            if mint not in held: continue  # not actually holding = already sold
+            age = now - pos.get("timestamp", now)
+            if age > stale_age_s:
+                stale.append((key, mint, pos, age))
+
+    if not orphans and not stale:
+        return
+
+    print(f"  🧹 orphan sweep: {len(orphans)} orphan(s), {len(stale)} stale position(s) >={STALE_POSITION_MAX_H}h")
+
+    # 4. Fire SELLs via same execute path as regular trades
+    for mint in orphans:
+        print(f"    🧹 orphan SELL {mint[:16]}... (held {held[mint]:.2f}, not tracked)")
+        trade = CopyTrade(
+            timestamp=now, source_wallet="ORPHAN", source_sig="",
+            our_wallet=wallet, action="SELL", token_mint=mint,
+            amount_sol=0.01, scaled_amount_sol=0.01, source_price_sol=0.0,
+        )
+        trade.error = "orphan_sweep"
+        try:
+            ok = await execute_copy_trade(trade)
+            trade.status = "confirmed" if ok else "failed"
+            save_copy_trade(trade)
+            if ok and mint not in tracked_mints:
+                asyncio.create_task(_close_empty_ata(KEYPAIR_LOADED, mint))
+        except Exception as e:
+            print(f"      ⚠️ orphan sell err: {e}")
+        await asyncio.sleep(2)
+
+    for key, mint, pos, age in stale:
+        src = key.split("::", 1)[0]
+        scaled = pos.get("scaled_amount", 0.01)
+        print(f"    ⏰ stale SELL {mint[:16]}... age={age/3600:.1f}h (source {src[:14]} didn't sell)")
+        trade = CopyTrade(
+            timestamp=now, source_wallet=src, source_sig="",
+            our_wallet=wallet, action="SELL", token_mint=mint,
+            amount_sol=scaled, scaled_amount_sol=scaled,
+            source_price_sol=pos.get("entry_price", 0.0),
+        )
+        try:
+            ok = await execute_copy_trade(trade)
+            trade.status = "confirmed" if ok else "failed"
+            if ok:
+                pnl = record_paper_trade_pnl(trade, paper_positions)
+                if pnl is not None: trade.realized_pnl_sol = pnl
+                trade.error = f"stale_exit_{age//3600}h"
+                save_paper_positions(paper_positions)
+                asyncio.create_task(_close_empty_ata(KEYPAIR_LOADED, mint))
+            save_copy_trade(trade)
+        except Exception as e:
+            print(f"      ⚠️ stale sell err: {e}")
+        await asyncio.sleep(2)
+
+
 async def sweep_ghost_positions(paper_positions: Dict) -> None:
     """Safety-net: find live-mode open positions where the claimed BUY tx
     doesn't have our wallet holding any of the token, after enough time
@@ -1466,6 +1606,7 @@ async def run_engine() -> None:
         polling_loop(paper_positions),
         consensus_processor(paper_positions),
         ghost_sweep_loop(paper_positions),
+        orphan_sweep_loop(paper_positions),  # 30-min tick: auto-close orphans + stale positions
     )
 
 

@@ -1,5 +1,30 @@
 # 🏄 Reef — Solana DEX Wallet Scanner
 
+## 🎯 CRITICAL STRATEGY FACTS — READ FIRST
+
+**This is a TAIL-DRIVEN whale-copy strategy. NOT grind-positive small-wins.**
+
+- Top 5 live whales (on-chain verified 30d): **437 round-trips, 14 rips ≥10×, 8 rips ≥50×, max 630× ROI**.
+- Rate: **~1 rip ≥10× per 31 trips**; avg trip ROI **+93% to +766%** per whale.
+- **One 630× rip at 0.05 SOL basis = +31.5 SOL (~$7,500).** One per month = strategy wins.
+- Paper bucket's rip counts (32 ≥10×, 10 ≥50×) were **~60% artifacts from wallet 84NXvzQM** — IGNORE, not real.
+- Watch bucket's "+0.84 mSOL/sell grind" is the RETAIL-sniper pattern, NOT our whale strategy. Don't confuse them.
+
+**What kills the strategy:**
+1. Missing whale signals (WS shard drop, Helius 429, polling gap) → miss the rip → month's profits evaporated
+2. Tail-capture ratio too low — source makes 630×, we make 3× because our 4s lag compresses the tail
+3. NOT slip — measured 0.1-0.7% on 4 of 5 whales; their deep pools absorb our 0.01-0.05 SOL invisibly
+
+**Key design choices (Apr 18 2026):**
+- Proportional alloc: `min(0.05, max(0.01, source_sol × 0.001))` — conviction-weighted, cap at 0.05 SOL
+- Slip gate: 5% (correct for these wallets — NEVER raise to "catch more" — random-whale large buys are −19% median)
+- Orphan sweep every 30 min: auto-SELL untracked holdings + force-exit positions >6h old
+- SELL-guard: skip LIVE SELL if we have no matching open (prevents "no balance" failures)
+
+**Full analysis:** see `analysis/` directory — STRATEGY_REVIEW.md, MOONSHOT_AUDIT.md, LARGE_ORDER_BACKTEST.md.
+
+---
+
 **Automatically find profitable wallets trading on Solana DEXs.**
 
 Scans recent blocks, discovers wallets making money, and saves them for monitoring/copy-trading.
