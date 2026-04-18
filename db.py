@@ -216,14 +216,16 @@ def save_wallets(wallets: list):
         con.close()
 
 def get_top_wallets(limit: int = 50) -> pd.DataFrame:
-    """Top wallets by score (capped for performance)."""
+    """Top wallets by score (capped for performance). The WHERE clause is needed —
+    DuckDB silently returns zero rows on bare ORDER BY score DESC despite non-NULL
+    scores being present; adding the IS NOT NULL predicate works around the quirk."""
     cap = min(limit, 20)
     con = get_db()
     try:
         return con.execute(
             f"SELECT address, score, total_trades, win_rate, profit_factor, avg_roi, best_roi, worst_roi, "
             f"avg_hold_minutes, last_active, favorite_token, solscan_link "
-            f"FROM wallets ORDER BY score DESC LIMIT {cap}"
+            f"FROM wallets WHERE score IS NOT NULL ORDER BY score DESC LIMIT {cap}"
         ).df()
     finally:
         con.close()
@@ -273,11 +275,11 @@ def get_stats() -> dict:
         total_w = con.execute("SELECT COUNT(*) FROM wallets").fetchone()[0]
         qual_w  = con.execute("SELECT COUNT(*) FROM wallets WHERE score >= 0.5").fetchone()[0]
 
-        # Top 10 wallets
+        # Top 10 wallets — WHERE clause required (DuckDB quirk: bare ORDER BY returns 0)
         top_rows = con.execute(
             "SELECT address, score, total_trades, win_rate, profit_factor, avg_roi, best_roi, worst_roi, "
             "avg_hold_minutes, last_active, favorite_token, solscan_link "
-            "FROM wallets ORDER BY score DESC LIMIT 10"
+            "FROM wallets WHERE score IS NOT NULL ORDER BY score DESC LIMIT 10"
         ).fetchall()
         cols = [d[0] for d in con.description]
         top_wallets = [dict(zip(cols, r)) for r in top_rows]
