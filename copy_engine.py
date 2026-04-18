@@ -128,33 +128,33 @@ def record_paper_trade_pnl(trade: "CopyTrade", positions: Dict[str, dict]) -> Op
     """
     Returns realized PnL (SOL) on SELL, 0.0 on BUY (position opened), or None if
     this SELL has no matching BUY position (caller should skip recording the trade).
+
+    Uses our ACTUAL fill price (trade.our_price_sol, set from on-chain receipt
+    in live mode) when available — otherwise source price as fallback for paper.
     """
-    # Composite key (wallet, mint): only the opening wallet's SELL closes its own position.
-    # Prevents cross-wallet PnL contamination where wallet B's unrelated SELL of mint X
-    # was closing wallet A's copy position at B's exit price.
     key = f"{trade.source_wallet}::{trade.token_mint}"
+    # Prefer our real fill price; fall back to source's price only if unknown
+    price = trade.our_price_sol if trade.our_price_sol > 0 else trade.source_price_sol
     if trade.action == "BUY":
-        if trade.source_price_sol <= 0:
-            return None  # can't open position with unknown price, skip recording
+        if price <= 0:
+            return None
         if key in positions:
-            return None  # this wallet already has an open position in this mint
+            return None
         positions[key] = {
             "source_wallet": trade.source_wallet,
             "token_mint": trade.token_mint,
-            "entry_price": trade.source_price_sol,
+            "entry_price": price,  # our actual BUY fill (live) or source price (paper)
             "scaled_amount": trade.scaled_amount_sol,
             "timestamp": trade.timestamp,
         }
         return 0.0
     elif trade.action == "SELL" and key in positions:
-        if trade.source_price_sol <= 0:
-            return None  # can't compute PnL with unknown exit price, skip recording
+        if price <= 0:
+            return None
         pos = positions.pop(key)
-        # PnL = (exit_price - entry_price) * token_count
-        # token_count = sol_in / entry_price
         token_count = pos["scaled_amount"] / pos["entry_price"]
-        return (trade.source_price_sol - pos["entry_price"]) * token_count
-    # SELL with no matching BUY — don't record (would inflate trade count with zero-PnL rows)
+        # PnL uses our actual SELL fill (live) or source price (paper).
+        return (price - pos["entry_price"]) * token_count
     return None
 
 
@@ -259,6 +259,130 @@ SOL_MINT = "So11111111111111111111111111111111111111112"
 # as on-chain confirmation — txs die in mempool all the time. Only PumpSwap SDK
 # confirms internally. Poll ourselves for the other two paths so CSV "confirmed"
 # status matches reality.
+async def _fetch_actual_fill(sig: str, action: str, token_mint: str, wallet_pubkey: str) -> Optional[float]:
+    """
+    Read a confirmed tx from chain and compute the ACTUAL price we filled at.
+    For BUY:  price = SOL_spent / tokens_received
+    For SELL: price = SOL_received / tokens_sold
+    Uses real pre/post balances, not Jupiter's quote (which is pre-slippage).
+    Returns None on any lookup failure (caller falls back to source_price_sol).
+    """
+    if not sig or sig in ("confirmed", "DRY_RUN", "DRY_RUN_SIG"):
+        return None
+    import aiohttp
+    for rpc in ["https://api.mainnet-beta.solana.com", "https://solana.publicnode.com"]:
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.post(rpc, json={
+                    "jsonrpc": "2.0", "id": 1, "method": "getTransaction",
+                    "params": [sig, {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0, "commitment": "confirmed"}],
+                }, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    if resp.status != 200: continue
+                    d = await resp.json()
+                    tx = d.get("result")
+                    if not tx: continue
+                    meta = tx.get("meta", {})
+                    if meta.get("err"): return None
+
+                    # Find wallet index in accountKeys
+                    account_keys = tx.get("transaction", {}).get("message", {}).get("accountKeys", [])
+                    wallet_idx = None
+                    for i, k in enumerate(account_keys):
+                        pubkey = k.get("pubkey") if isinstance(k, dict) else k
+                        if pubkey == wallet_pubkey:
+                            wallet_idx = i; break
+                    if wallet_idx is None: return None
+
+                    # Native SOL delta (post - pre), plus fee (we paid it)
+                    pre_sol  = meta.get("preBalances",  [])
+                    post_sol = meta.get("postBalances", [])
+                    if len(pre_sol) <= wallet_idx or len(post_sol) <= wallet_idx: return None
+                    fee = meta.get("fee", 0)
+                    # On BUY: wallet SOL decreased by (SOL_spent + fee). Reverse: SOL_spent = pre - post - fee
+                    # On SELL: wallet SOL increased by (SOL_received - fee). Reverse: SOL_received = post - pre + fee
+                    if action == "BUY":
+                        sol_amt = (pre_sol[wallet_idx] - post_sol[wallet_idx] - fee) / 1e9
+                    else:
+                        sol_amt = (post_sol[wallet_idx] - pre_sol[wallet_idx] + fee) / 1e9
+                    if sol_amt <= 0: return None
+
+                    # Token delta: find the wallet's token account for target mint
+                    pre_tokens  = {b["accountIndex"]: b for b in meta.get("preTokenBalances",  [])}
+                    post_tokens = {b["accountIndex"]: b for b in meta.get("postTokenBalances", [])}
+                    indices = set(pre_tokens.keys()) | set(post_tokens.keys())
+                    token_delta_raw = 0
+                    decimals = 6
+                    for idx in indices:
+                        pre  = pre_tokens.get(idx, {})
+                        post = post_tokens.get(idx, {})
+                        mint = post.get("mint") or pre.get("mint")
+                        owner = post.get("owner") or pre.get("owner")
+                        if mint != token_mint or owner != wallet_pubkey: continue
+                        pre_amt  = int((pre.get("uiTokenAmount") or {}).get("amount",  0) or 0)
+                        post_amt = int((post.get("uiTokenAmount") or {}).get("amount", 0) or 0)
+                        decimals = int((post.get("uiTokenAmount") or pre.get("uiTokenAmount") or {}).get("decimals", 6))
+                        token_delta_raw = abs(post_amt - pre_amt)
+                    if token_delta_raw <= 0: return None
+                    token_amount = token_delta_raw / (10 ** decimals)
+                    if token_amount <= 0: return None
+                    return sol_amt / token_amount
+        except Exception:
+            continue
+    return None
+
+
+async def _close_empty_ata(keypair, token_mint: str) -> bool:
+    """Close an empty token account to reclaim ~0.002 SOL rent. Silent no-op on
+    any failure — best-effort rent recovery, not critical path."""
+    try:
+        import aiohttp, base64
+        from solders.pubkey import Pubkey
+        from solders.instruction import Instruction, AccountMeta
+        from solders.transaction import VersionedTransaction
+        from solders.message import MessageV0
+
+        owner = keypair.pubkey()
+        mint_pk = Pubkey.from_string(token_mint)
+        TOKEN_PROGRAM = Pubkey.from_string("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
+        ATA_PROGRAM   = Pubkey.from_string("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")
+        # Derive associated token account
+        ata, _ = Pubkey.find_program_address(
+            [bytes(owner), bytes(TOKEN_PROGRAM), bytes(mint_pk)], ATA_PROGRAM
+        )
+        # closeAccount instruction: discriminator=9, no data; accounts [ata, dest=owner, authority=owner]
+        ix = Instruction(
+            program_id=TOKEN_PROGRAM,
+            accounts=[
+                AccountMeta(pubkey=ata,   is_signer=False, is_writable=True),
+                AccountMeta(pubkey=owner, is_signer=False, is_writable=True),
+                AccountMeta(pubkey=owner, is_signer=True,  is_writable=False),
+            ],
+            data=bytes([9]),
+        )
+        # Fresh blockhash
+        async with aiohttp.ClientSession() as s:
+            async with s.post("https://api.mainnet-beta.solana.com", json={
+                "jsonrpc":"2.0","id":1,"method":"getLatestBlockhash","params":[{"commitment":"confirmed"}],
+            }, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                if resp.status != 200: return False
+                blockhash_str = (await resp.json())["result"]["value"]["blockhash"]
+            from solders.hash import Hash
+            msg = MessageV0.try_compile(owner, [ix], [], Hash.from_string(blockhash_str))
+            tx = VersionedTransaction(msg, [keypair])
+            async with s.post("https://api.mainnet-beta.solana.com", json={
+                "jsonrpc":"2.0","id":1,"method":"sendTransaction",
+                "params":[base64.b64encode(bytes(tx)).decode(),
+                          {"encoding":"base64","skipPreFlight":True,"maxRetries":3}],
+            }, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                d = await resp.json()
+                if "result" in d:
+                    print(f"    🧹 closed empty ATA for {token_mint[:16]}... sig={d['result'][:20]}...")
+                    return True
+    except Exception as e:
+        pass
+    return False
+
+
 async def _wait_for_confirmation(sig: str, timeout_s: float = 45.0) -> bool:
     if not sig or sig in ("confirmed", "DRY_RUN", "DRY_RUN_SIG"):
         return True  # PumpSwap confirms internally; DRY_RUN sentinels pass through
@@ -308,9 +432,12 @@ async def execute_copy_trade(trade: CopyTrade) -> bool:
         # absorbs the 2-6s execution lag vs source).
         in_mint  = SOL_MINT if trade.action == "BUY" else trade.token_mint
         out_mint = trade.token_mint if trade.action == "BUY" else SOL_MINT
+        # Slippage 500 bps (5%) — 1000 bps was inviting sandwich attacks while
+        # still failing on MEV-hot pools. Tighter slip sacrifices some fills but
+        # protects the ones that do land from being eaten.
         result = await execute_swap_legacy(
             KEYPAIR_LOADED, in_mint, out_mint,
-            trade.scaled_amount_sol, slippage_bps=1000,
+            trade.scaled_amount_sol, slippage_bps=500,
         )
 
         if result.success:
@@ -321,9 +448,22 @@ async def execute_copy_trade(trade: CopyTrade) -> bool:
             # in the CSV/dashboard is a lie for txs that die in mempool.
             confirmed = await _wait_for_confirmation(result.signature)
             if not confirmed:
-                trade.error = "submitted but not confirmed on-chain within 15s"
+                trade.error = "submitted but not confirmed on-chain within 45s"
                 print(f"    ⏳ {trade.action} {trade.token_mint[:16]}... submitted but not confirmed — marking failed")
                 return False
+            # REAL fill price from tx receipt (not Jupiter's pre-slippage quote).
+            # PnL computed from these will match wallet balance change.
+            real_price = await _fetch_actual_fill(
+                result.signature, trade.action, trade.token_mint, str(KEYPAIR_LOADED.pubkey())
+            )
+            if real_price and real_price > 0:
+                if trade.action == "BUY":
+                    slip_pct = (real_price - trade.source_price_sol) / trade.source_price_sol * 100 if trade.source_price_sol > 0 else 0
+                else:
+                    slip_pct = (trade.source_price_sol - real_price) / trade.source_price_sol * 100 if trade.source_price_sol > 0 else 0
+                if abs(slip_pct) > 0.5:
+                    print(f"    🎯 real fill: {real_price:.3e} (source {trade.source_price_sol:.3e}, slip {slip_pct:+.2f}%)")
+                trade.our_price_sol = real_price
             return True
         trade.error = result.error
         print(f"    ❌ exec failed ({trade.action} {trade.token_mint[:16]}...): {result.error[:180]}")
@@ -400,9 +540,7 @@ async def _execute_signal(
         trade.status = "confirmed" if success else "failed"
         if success:
             print(f"  📤 {tag}{action} submitted: {scaled:.4f} SOL | {token_mint[:16]}... | {trade.our_sig[:20]}...")
-            # Track PnL using source's prices as entry/exit proxy. Not perfect
-            # (our fills lag 2-6s vs source) but far better than always reporting
-            # 0 PnL. Uses the same paper_positions structure + composite key.
+            # PnL from our actual fill prices (fetched from tx receipt in execute_copy_trade)
             pnl = record_paper_trade_pnl(trade, paper_positions)
             if pnl is not None:
                 trade.realized_pnl_sol = pnl
@@ -410,6 +548,10 @@ async def _execute_signal(
                     pnl_str = f" pnl={pnl:+.6f}"
                     print(f"    💰 {action} closed{pnl_str} SOL")
                 save_paper_positions(paper_positions)
+            # After a successful SELL, close the empty ATA to reclaim ~0.002 SOL rent.
+            # Fire-and-forget background task so we don't block the consensus_processor.
+            if action == "SELL":
+                asyncio.create_task(_close_empty_ata(KEYPAIR_LOADED, token_mint))
         elif action == "BUY":
             # Release the cooldown that consensus_processor set pre-execute.
             # Otherwise a failed BUY locks us out of this mint for 5 min,
