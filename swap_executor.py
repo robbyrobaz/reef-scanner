@@ -42,6 +42,8 @@ JUPITER_QUOTE_API = "https://api.jup.ag/swap/v1/quote"
 JUPITER_SWAP_API = "https://api.jup.ag/swap/v1/swap"
 JUPITER_PRICE_API = "https://api.jup.ag/price/v2"
 SOL_MINT = "So11111111111111111111111111111111111111112"
+# Helius plan exhausted — this URL is kept as a constant reference only; the only
+# caller (send_raw_transaction) is dead code. Do NOT re-introduce Helius submits.
 HELIUS_TX_URL = f"https://api.helius.xyz/v0/addresses/push?api-key={HELIUS_API_KEY}"
 
 KEYPAIR_FILE = os.path.expanduser(

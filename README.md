@@ -139,21 +139,24 @@ ACTIVITY_WINDOW_DAYS = 30
 
 ---
 
-## Cron / Scheduling
+## Architecture — Two Components
 
-The scanner runs via Hermes MCP cron every 5 minutes:
+**1. Scanner (`scanner.py`)** — background research, populates `data/reef.db`:
+- Runs every 5 minutes via Hermes MCP cron
+- Scans recent Solana blocks, extracts swaps, ranks wallets by ROI/WR over 30d
+- Used for wallet DISCOVERY + RANKING only (no trade detection, no execution)
 
-```python
-mcp_cronjob(action="create", 
-            name="Reef DEX Scanner",
-            schedule="every 5m",
-            prompt="Run scanner.py...")
-```
+**2. Copy engine (`copy_engine.py`)** — always-on live trader, systemd service `reef-copy-engine.service`:
+- Subscribes to `logsSubscribe` WebSocket for 171 watched wallets (sharded across 3 connections, 80 per shard to avoid public RPC's 1013 cap)
+- Primary RPC: **`wss://solana-rpc.publicnode.com`** (Helius plan exhausted Apr 17, not used anymore)
+- PumpPortal WS as secondary source for pump.fun activity
+- 5s polling fallback for gaps
+- Consensus processor: buffers signals, fires copy within ~300-500ms of source
+- Orphan sweep (every 30 min): auto-SELLs untracked holdings + force-exits positions >6h old
+- Ghost sweep (every 20s): closes positions that appeared confirmed but orphaned
+- Dashboard: `reef-dashboard.service` serves stats at http://omen-claw.tail76e7df.ts.net:8891/
 
-To manually trigger:
-```python
-mcp_cronjob(action="run", job_id="ec5dfb8ad7f6")
-```
+**The scanner does NOT detect live trades — the copy engine's WebSockets do.**
 
 ---
 
@@ -162,7 +165,7 @@ mcp_cronjob(action="run", job_id="ec5dfb8ad7f6")
 - **Single scan = limited history** — Wallet ROI/win rate requires both buy AND sell. A single block scan may only catch one side of a trade.
 - **Accumulate over time** — Running every 5 minutes builds trading history over hours/days.
 - **Pump.fun dominant** — Currently ~100% of activity is Pump.fun during memecoin season.
-- **No auto-copier yet** — Only wallet discovery, no trade execution.
+- ~~No auto-copier yet~~ — FULLY IMPLEMENTED. Copy engine runs 24/7, 5 whales live, 166 on watch (Apr 18 2026).
 
 ---
 
@@ -179,7 +182,7 @@ mcp_cronjob(action="run", job_id="ec5dfb8ad7f6")
 
 | Component | Tool |
 |-----------|------|
-| RPC | Helius (free tier) |
+| RPC | `solana-rpc.publicnode.com` (primary, WS + HTTP), mainnet-beta fallback. Helius plan exhausted — do NOT use. |
 | Async | `asyncio` + `aiohttp` |
 | Data | CSV files |
 | Scheduling | Hermes MCP cron |

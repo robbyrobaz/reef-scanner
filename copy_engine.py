@@ -366,7 +366,7 @@ async def _fetch_actual_fill(sig: str, action: str, token_mint: str, wallet_pubk
     if not sig or sig in ("confirmed", "DRY_RUN", "DRY_RUN_SIG"):
         return None
     import aiohttp
-    for rpc in ["https://api.mainnet-beta.solana.com", "https://solana.publicnode.com"]:
+    for rpc in ["https://solana.publicnode.com", "https://api.mainnet-beta.solana.com"]:
         try:
             async with aiohttp.ClientSession() as s:
                 async with s.post(rpc, json={
@@ -455,9 +455,9 @@ async def _close_empty_ata(keypair, token_mint: str) -> bool:
             ],
             data=bytes([9]),
         )
-        # Fresh blockhash
+        # Fresh blockhash — publicnode primary (mainnet-beta is rate-limited)
         async with aiohttp.ClientSession() as s:
-            async with s.post("https://api.mainnet-beta.solana.com", json={
+            async with s.post("https://solana.publicnode.com", json={
                 "jsonrpc":"2.0","id":1,"method":"getLatestBlockhash","params":[{"commitment":"confirmed"}],
             }, timeout=aiohttp.ClientTimeout(total=5)) as resp:
                 if resp.status != 200: return False
@@ -465,7 +465,7 @@ async def _close_empty_ata(keypair, token_mint: str) -> bool:
             from solders.hash import Hash
             msg = MessageV0.try_compile(owner, [ix], [], Hash.from_string(blockhash_str))
             tx = VersionedTransaction(msg, [keypair])
-            async with s.post("https://api.mainnet-beta.solana.com", json={
+            async with s.post("https://solana.publicnode.com", json={
                 "jsonrpc":"2.0","id":1,"method":"sendTransaction",
                 "params":[base64.b64encode(bytes(tx)).decode(),
                           {"encoding":"base64","skipPreFlight":True,"maxRetries":3}],
@@ -856,12 +856,13 @@ DEX_PROGS     = {PUMP_AMM_PROG, JUPITER_PROG, RAYDIUM_PROG}
 # WS endpoint priority: Helius first (best SLA, 1M free credits/month),
 # fall back to public Solana RPC on HTTP 429 (credits exhausted).
 # Format/protocol is identical — both speak standard Solana logsSubscribe.
+# Helius primary plan exhausted (Apr 17) — publicnode is our primary WS now.
+# mainnet-beta heavily rate-limited; keep only as last-resort fallback.
 def _ws_urls() -> list:
-    urls = []
-    if HELIUS_API_KEY:
-        urls.append(f"wss://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}")
-    urls.append("wss://api.mainnet-beta.solana.com")
-    return urls
+    return [
+        "wss://solana-rpc.publicnode.com",
+        "wss://api.mainnet-beta.solana.com",
+    ]
 
 
 async def helius_logs_listener(shard_wallets: Optional[List[str]] = None, shard_label: str = "") -> None:
