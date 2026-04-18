@@ -303,50 +303,34 @@ async def _get_token_decimals(mint: str) -> int:
 async def _simulate_live_quote_price(action: str, token_mint: str, amount_sol: float) -> Optional[float]:
     """Simulate Jupiter fill at this moment (no actual swap).
     Returns SOL per UI-token (same unit as swap_parser's price_sol).
+
+    For BUY: query SOL→token quote; price = SOL spent / tokens received.
+    For SELL: always query SOL→token direction (symmetric on AMMs) and
+      use it as the current market reference price, since we don't have
+      a token balance at this point. Accuracy is ~1% vs true sell price
+      on normal pools — plenty for slip estimation.
     """
     if amount_sol <= 0 or not token_mint:
         return None
     import aiohttp
-    in_mint = SOL_MINT if action == "BUY" else token_mint
-    out_mint = token_mint if action == "BUY" else SOL_MINT
     token_dec = await _get_token_decimals(token_mint)
-    # For BUY: spend amount_sol SOL (scale to lamports = 9 decimals)
-    # For SELL: we'd "sell token worth amount_sol" — approximate by converting
-    #   amount_sol at source's ballpark price, but since we don't have a
-    #   confirmed token balance here, just query BUY-equivalent and invert.
-    #   For SELL simulation simplicity we still send SOL lamports in the quote
-    #   and extract the per-token price from the ratio.
-    amount_base = int(amount_sol * 1e9)
+    # Always query the SOL→TOKEN direction for consistent market reference
+    amount_lamports = int(amount_sol * 1e9)
     try:
         async with aiohttp.ClientSession() as s:
             async with s.get("https://api.jup.ag/swap/v1/quote", params={
-                "inputMint": in_mint, "outputMint": out_mint,
-                "amount": amount_base, "slippageBps": 500,
+                "inputMint": SOL_MINT, "outputMint": token_mint,
+                "amount": amount_lamports, "slippageBps": 500,
             }, timeout=aiohttp.ClientTimeout(total=6)) as resp:
                 if resp.status != 200:
                     return None
                 q = await resp.json()
-                in_a = int(q.get("inAmount", 0) or 0)
-                out_a = int(q.get("outAmount", 0) or 0)
+                in_a = int(q.get("inAmount", 0) or 0)  # SOL lamports
+                out_a = int(q.get("outAmount", 0) or 0)  # token base units
                 if in_a <= 0 or out_a <= 0:
                     return None
-                # Compute SOL per UI-token (matches swap_parser.price_sol unit).
-                # For BUY: in=SOL(9 dec), out=TOKEN(token_dec)
-                #   sol_ui = in_a / 1e9;  tok_ui = out_a / 10^token_dec
-                #   price_sol = sol_ui / tok_ui = (in_a * 10^token_dec) / (out_a * 1e9)
-                # For SELL (we queried in=SOL, out=TOKEN): same computation gives
-                #   SOL-per-token that would BUY. For a SELL estimate it's symmetric
-                #   enough to use the same price as the market at this moment (slip
-                #   asymmetry between buy and sell is typically <50bps on liquid pools).
-                if action == "BUY":
-                    return (in_a * (10 ** token_dec)) / (out_a * 1e9)
-                else:
-                    # For SELL, we queried swap SOL→token. Invert to get token→SOL
-                    # price: we'd swap tokens for SOL at the reverse rate.
-                    # price_sol (SOL per token ui we'd receive on sell) ≈
-                    #   sol_ui / tok_ui = (in_a * 10^dec) / (out_a * 1e9)
-                    # (roughly symmetric to BUY in normal market; AMM symmetric fees).
-                    return (in_a * (10 ** token_dec)) / (out_a * 1e9)
+                # SOL per UI-token: (in_a / 1e9) / (out_a / 10^dec)
+                return (in_a * (10 ** token_dec)) / (out_a * 1e9)
     except Exception:
         return None
 
@@ -644,12 +628,20 @@ async def _execute_signal(
             await asyncio.sleep(WATCH_SIM_LAG_S)
             simulated_price = await _simulate_live_quote_price(action, token_mint, scaled)
             if simulated_price and simulated_price > 0:
-                trade.our_price_sol = simulated_price
-                slip_pct = ((simulated_price - price_sol) / price_sol * 100) if price_sol > 0 else 0
-                # For SELLs, positive slip means we got MORE SOL (good);
-                # for BUYs, positive slip means we paid MORE per token (bad).
-                if abs(slip_pct) >= 1.0:
-                    print(f"    📊 watch-sim slip {action} {token_mint[:16]}...: {slip_pct:+.1f}% (src {price_sol:.3e} vs sim {simulated_price:.3e})")
+                # Sanity check: Jupiter occasionally returns garbage for illiquid
+                # mints or routing edge cases. If simulated price is >3x or <1/3x
+                # the source price, discard and fall back to source-price paper.
+                # Real slip in live data was ~0-30% for normal wallets, ~50% worst
+                # case for the most sniped wallets. Anything past 200% is noise.
+                ratio = simulated_price / price_sol if price_sol > 0 else 0
+                if 0.33 <= ratio <= 3.0:
+                    trade.our_price_sol = simulated_price
+                    slip_pct = (ratio - 1) * 100
+                    if abs(slip_pct) >= 1.0:
+                        print(f"    📊 watch-sim slip {action} {token_mint[:16]}...: {slip_pct:+.1f}% (src {price_sol:.3e} vs sim {simulated_price:.3e})")
+                else:
+                    # Garbage quote — log once but don't use it
+                    print(f"    ⚠ watch-sim discarded bad quote {action} {token_mint[:16]}...: ratio {ratio:.2e} (src {price_sol:.3e} vs sim {simulated_price:.3e})")
         pnl = record_paper_trade_pnl(trade, paper_positions)
         if pnl is None:
             # No valid position to open/close — skip recording this trade entirely
