@@ -631,6 +631,14 @@ async def _execute_signal(
         is_watch = True  # treat as watch regardless of copy_mode
         _live = False
 
+    # Skip LIVE SELL if we never opened this (source_wallet, mint) position.
+    # Saves wasted RPC calls + CSV pollution on "No balance to sell" failures.
+    # Many source SELLs signal mints we never bought (offline, cooldowns, etc.).
+    if _live and action == "SELL":
+        pos_key = f"{source_wallet}::{token_mint}"
+        if pos_key not in paper_positions:
+            return  # never opened — nothing to close
+
     # Skip live BUY if we're already holding this (source_wallet, mint) position.
     # The 5-min token cooldown prevents back-to-back BUYs but expires while we
     # might still hold the first position, causing silent double-buys (saw this
