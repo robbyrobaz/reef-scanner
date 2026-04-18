@@ -167,7 +167,14 @@ def record_paper_trade_pnl(trade: "CopyTrade", positions: Dict[str, dict]) -> Op
         pos = positions.pop(key)
         token_count = pos["scaled_amount"] / pos["entry_price"]
         # PnL uses our actual SELL fill (live) or source price (paper).
-        return (price - pos["entry_price"]) * token_count
+        pnl = (price - pos["entry_price"]) * token_count
+        # Sanity: cap absurd PnL (e.g. tiny entry_price + garbage sell price → blow-up).
+        # Scaled amount is the cost basis; realistic max gain is ~100x = 100× basis.
+        cap = max(pos["scaled_amount"] * 200.0, 1.0)
+        if abs(pnl) > cap:
+            print(f"    ⚠ clamped absurd PnL {pnl:.2e} → 0 for {trade.token_mint[:16]}... (entry={pos['entry_price']:.3e} exit={price:.3e})")
+            return 0.0
+        return pnl
     return None
 
 
