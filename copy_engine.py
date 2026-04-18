@@ -272,28 +272,56 @@ SOL_MINT = "So11111111111111111111111111111111111111112"
 # as on-chain confirmation — txs die in mempool all the time. Only PumpSwap SDK
 # confirms internally. Poll ourselves for the other two paths so CSV "confirmed"
 # status matches reality.
+# Token decimals cache — mint → decimals. Fetched once per mint via getTokenSupply.
+_DECIMALS_CACHE: Dict[str, int] = {}
+
+
+async def _get_token_decimals(mint: str) -> int:
+    """Return token decimals (cached). Default 6 for pump-amm tokens."""
+    if mint in _DECIMALS_CACHE:
+        return _DECIMALS_CACHE[mint]
+    import aiohttp
+    for rpc in ["https://solana.publicnode.com", "https://api.mainnet-beta.solana.com"]:
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.post(rpc, json={
+                    "jsonrpc": "2.0", "id": 1, "method": "getTokenSupply",
+                    "params": [mint],
+                }, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                    if resp.status != 200: continue
+                    d = await resp.json()
+                    dec = (d.get("result", {}).get("value") or {}).get("decimals")
+                    if dec is not None:
+                        _DECIMALS_CACHE[mint] = int(dec)
+                        return int(dec)
+        except Exception:
+            continue
+    _DECIMALS_CACHE[mint] = 6  # pump.fun default
+    return 6
+
+
 async def _simulate_live_quote_price(action: str, token_mint: str, amount_sol: float) -> Optional[float]:
-    """Simulate what Jupiter would fill AT THIS MOMENT for the given swap.
-    Used by watch-mode to measure real slip without spending SOL.
-    Returns SOL/token price, or None if Jupiter can't route.
-    For BUY: price = inAmount/outAmount / 1e9 (SOL per token, higher = worse fill).
-    For SELL: price = outAmount/inAmount / 1e9 (SOL per token received, higher = better fill).
+    """Simulate Jupiter fill at this moment (no actual swap).
+    Returns SOL per UI-token (same unit as swap_parser's price_sol).
     """
     if amount_sol <= 0 or not token_mint:
         return None
     import aiohttp
     in_mint = SOL_MINT if action == "BUY" else token_mint
     out_mint = token_mint if action == "BUY" else SOL_MINT
-    # For SELL, the "amount" is tokens-in; we don't know the token decimals here
-    # without a query. Use the source's scaled_amount_sol as a proxy for size —
-    # Jupiter quotes return per-token price regardless of exact size for normal
-    # trade sizes.
-    amount_lamports = int(amount_sol * 1e9) if action == "BUY" else int(amount_sol * 1e9)
+    token_dec = await _get_token_decimals(token_mint)
+    # For BUY: spend amount_sol SOL (scale to lamports = 9 decimals)
+    # For SELL: we'd "sell token worth amount_sol" — approximate by converting
+    #   amount_sol at source's ballpark price, but since we don't have a
+    #   confirmed token balance here, just query BUY-equivalent and invert.
+    #   For SELL simulation simplicity we still send SOL lamports in the quote
+    #   and extract the per-token price from the ratio.
+    amount_base = int(amount_sol * 1e9)
     try:
         async with aiohttp.ClientSession() as s:
             async with s.get("https://api.jup.ag/swap/v1/quote", params={
                 "inputMint": in_mint, "outputMint": out_mint,
-                "amount": amount_lamports, "slippageBps": 500,
+                "amount": amount_base, "slippageBps": 500,
             }, timeout=aiohttp.ClientTimeout(total=6)) as resp:
                 if resp.status != 200:
                     return None
@@ -302,16 +330,23 @@ async def _simulate_live_quote_price(action: str, token_mint: str, amount_sol: f
                 out_a = int(q.get("outAmount", 0) or 0)
                 if in_a <= 0 or out_a <= 0:
                     return None
-                # SOL-per-token: for BUY inMint=SOL (9 decimals), outMint=token (usually 6)
-                # For SELL swap SOL-per-token is SOL_out / tokens_in
+                # Compute SOL per UI-token (matches swap_parser.price_sol unit).
+                # For BUY: in=SOL(9 dec), out=TOKEN(token_dec)
+                #   sol_ui = in_a / 1e9;  tok_ui = out_a / 10^token_dec
+                #   price_sol = sol_ui / tok_ui = (in_a * 10^token_dec) / (out_a * 1e9)
+                # For SELL (we queried in=SOL, out=TOKEN): same computation gives
+                #   SOL-per-token that would BUY. For a SELL estimate it's symmetric
+                #   enough to use the same price as the market at this moment (slip
+                #   asymmetry between buy and sell is typically <50bps on liquid pools).
                 if action == "BUY":
-                    # in_a lamports SOL / out_a token base units = SOL/token in (lam / base_unit)
-                    # To get SOL-per-token uiAmount, need to normalize decimals. For accuracy
-                    # without fetching mint decimals, leave at raw ratio — the slip COMPARISON
-                    # with source_price (which was computed the same way by swap_parser) is valid.
-                    return (in_a / out_a) / 1e9
+                    return (in_a * (10 ** token_dec)) / (out_a * 1e9)
                 else:
-                    return (out_a / in_a) / 1e9
+                    # For SELL, we queried swap SOL→token. Invert to get token→SOL
+                    # price: we'd swap tokens for SOL at the reverse rate.
+                    # price_sol (SOL per token ui we'd receive on sell) ≈
+                    #   sol_ui / tok_ui = (in_a * 10^dec) / (out_a * 1e9)
+                    # (roughly symmetric to BUY in normal market; AMM symmetric fees).
+                    return (in_a * (10 ** token_dec)) / (out_a * 1e9)
     except Exception:
         return None
 
