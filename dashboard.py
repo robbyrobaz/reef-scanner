@@ -214,10 +214,14 @@ async def get_positions():
 async def get_wallet_stats():
     cfg = load_copy_config()
     positions = load_positions()
-    trades = load_copy_trades(limit=5000)  # All trades for accurate stats
+    trades = load_copy_trades(limit=100000)  # load all — CSV has ~10k rows, fast
 
-    # Status breakdown
-    paper = [t for t in trades if t.get("status") == "dry_run"]
+    # Status breakdown. Split paper into:
+    #   - historical paper (status=dry_run, error != watch_mode)
+    #   - watch-mode (ongoing evaluation, status=dry_run, error == watch_mode)
+    paper_historical = [t for t in trades if t.get("status") == "dry_run" and t.get("error") != "watch_mode"]
+    paper_watch      = [t for t in trades if t.get("status") == "dry_run" and t.get("error") == "watch_mode"]
+    paper = paper_historical  # backward-compat: old dashboard uses 'paper' key for historical
     live = [t for t in trades if t.get("status") == "confirmed"]
     failed = [t for t in trades if t.get("status") == "failed"]
 
@@ -278,7 +282,8 @@ async def get_wallet_stats():
 
     return {
         "paper": _stats(paper),
-        "live": _stats(live),
+        "live":  _stats(live),
+        "watch": _stats(paper_watch),   # NEW: watch-mode paper stats (ongoing eval of 80 candidates)
         "failed_trades": len(failed),
         "starting_sol": starting_balance,
         "last_updated": last_ts,       # Unix timestamp of most recent trade

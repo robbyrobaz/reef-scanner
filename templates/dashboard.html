@@ -174,7 +174,7 @@
       </div>
     </div>
     <div class="sc" id="sc-paper">
-      <div class="sc-title"><span class="dot" style="background:var(--orange)"></span> PAPER TRADING</div>
+      <div class="sc-title"><span class="dot" style="background:var(--orange)"></span> PAPER TRADING <span class="sub" style="color:var(--muted);font-weight:normal">(historical backtest, pre-Apr 17)</span></div>
       <div class="sc-pnl" id="cs-paper-pnl">—</div>
       <div class="sc-sub">Simulated Closed PnL (SOL)</div>
       <div class="sc-grid">
@@ -188,6 +188,23 @@
         <div class="sc-stat"><div class="sc-stat-val" id="cs-paper-best">—</div><div class="sc-stat-lbl">Best</div></div>
         <div class="sc-stat"><div class="sc-stat-val" id="cs-paper-worst">—</div><div class="sc-stat-lbl">Worst</div></div>
         <div class="sc-stat"><div class="sc-stat-val" id="cs-paper-avgwin">—</div><div class="sc-stat-lbl">Avg Win</div></div>
+      </div>
+    </div>
+    <div class="sc" id="sc-watch">
+      <div class="sc-title"><span class="dot" style="background:var(--amber)"></span> WATCH LIST <span class="sub" style="color:var(--muted);font-weight:normal">(80 wallets evaluated live, not traded)</span></div>
+      <div class="sc-pnl" id="cs-watch-pnl">—</div>
+      <div class="sc-sub">Simulated PnL if we had copied them too</div>
+      <div class="sc-grid">
+        <div class="sc-stat"><div class="sc-stat-val" id="cs-watch-wr">—</div><div class="sc-stat-lbl">Win Rate</div></div>
+        <div class="sc-stat"><div class="sc-stat-val" id="cs-watch-pf">—</div><div class="sc-stat-lbl">Profit Factor</div></div>
+        <div class="sc-stat"><div class="sc-stat-val" id="cs-watch-trades">—</div><div class="sc-stat-lbl">Total</div></div>
+        <div class="sc-stat"><div class="sc-stat-val" id="cs-watch-buys">—</div><div class="sc-stat-lbl">Buys</div></div>
+        <div class="sc-stat"><div class="sc-stat-val" id="cs-watch-sells">—</div><div class="sc-stat-lbl">Sells</div></div>
+        <div class="sc-stat"><div class="sc-stat-val" id="cs-watch-wins">—</div><div class="sc-stat-lbl">Wins</div></div>
+        <div class="sc-stat"><div class="sc-stat-val" id="cs-watch-losses">—</div><div class="sc-stat-lbl">Losses</div></div>
+        <div class="sc-stat"><div class="sc-stat-val" id="cs-watch-best">—</div><div class="sc-stat-lbl">Best</div></div>
+        <div class="sc-stat"><div class="sc-stat-val" id="cs-watch-worst">—</div><div class="sc-stat-lbl">Worst</div></div>
+        <div class="sc-stat"><div class="sc-stat-val" id="cs-watch-avgwin">—</div><div class="sc-stat-lbl">Avg Win</div></div>
       </div>
     </div>
   </div>
@@ -959,6 +976,7 @@ async function loadCopyStats() {
 
     fill('cs-live', s.live||{});
     fill('cs-paper', s.paper||{});
+    fill('cs-watch', s.watch||{});
 
     // Open positions: engine's live open (CSV BUY-SELL pairs unclosed)
     $('cs-live-open').textContent = fmt((s.live||{}).open||0);

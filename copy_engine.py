@@ -68,11 +68,12 @@ MAX_TRADE_AGE_S = int(os.getenv("COPY_MAX_TRADE_AGE_S", "60"))
 # Auto-close paper positions that have been open longer than this without a sell signal
 STALE_POSITION_HOURS = float(os.getenv("STALE_POSITION_HOURS", "24"))
 
-# Force-close live positions after this many minutes if source hasn't sold.
-# Data-derived: paper shows 5-15min hold bucket is the ONLY losing bucket (WR 52%,
-# total -0.186 SOL). 1-5min bucket wins; past 5min trends negative. Exit at 5min
-# ourselves rather than follow source into the losing zone.
-LIVE_FORCE_EXIT_MIN = float(os.getenv("LIVE_FORCE_EXIT_MIN", "5.0"))
+# Force-close disabled by default — the earlier 5-min default was based on paper
+# buckets computed with corrupt source_price data. True hold distribution in the
+# 30d real-swap mine: p25=15min, p50=32min, p75=210min. Only 7% of profitable
+# wallets hold <5min. A 5-min cutoff was aggressively cutting winners.
+# Set LIVE_FORCE_EXIT_MIN env var if you want force-exit back (in minutes).
+LIVE_FORCE_EXIT_MIN = float(os.getenv("LIVE_FORCE_EXIT_MIN", "0"))  # 0 = disabled
 
 # ── Shared state ─────────────────────────────────────────────────────────────
 # Dedup: sigs seen by any listener (prevents double-execution across WS + polling)
@@ -521,9 +522,11 @@ async def _execute_signal(
     # Per-wallet override: if this wallet is set to copy_mode="watch", force paper
     # simulation even when engine is live. Lets us evaluate candidate wallets without
     # committing real SOL to them.
+    is_watch = False
     if _live and entry.copy_mode == "watch":
         _live = False
         tag = f"[watch:{label}] " if label else "[watch] "
+        is_watch = True
 
     # Skip live BUY if we're already holding this (source_wallet, mint) position.
     # The 5-min token cooldown prevents back-to-back BUYs but expires while we
@@ -543,6 +546,10 @@ async def _execute_signal(
             return
         trade.realized_pnl_sol = pnl
         trade.status = "dry_run"
+        # Tag watch-mode rows in error field so dashboard can separate ongoing
+        # evaluation (watch) from historical backtest (pre-live paper).
+        if is_watch:
+            trade.error = "watch_mode"
         pnl_str = f" pnl={trade.realized_pnl_sol:+.6f}" if trade.realized_pnl_sol else ""
         print(f"  🐸 {tag}PAPER {action} {scaled:.4f} SOL → {token_mint[:16]}...{pnl_str}")
         save_copy_trade(trade)
@@ -917,9 +924,12 @@ async def pumpportal_ws_listener() -> None:
 # ── Polling Loop ──────────────────────────────────────────────────────────────
 async def force_exit_live_stale(paper_positions: Dict) -> None:
     """Live-mode only: force-close positions held longer than LIVE_FORCE_EXIT_MIN.
-    Data shows paper 5-15min hold bucket is net-negative (-0.186 SOL, WR 52%);
-    1-5min buckets carry all the edge. If source hasn't signaled SELL by 5min,
-    we bail ourselves rather than ride into the losing zone."""
+    DISABLED by default (LIVE_FORCE_EXIT_MIN=0). Earlier 5-min default was wrong —
+    based on paper buckets that used corrupt source_price_sol data. True 30d
+    real-swap hold distribution: p25=15min, p50=32min, p75=210min.
+    Kept here in case we want to re-enable later with a properly-derived cutoff."""
+    if LIVE_FORCE_EXIT_MIN <= 0:
+        return
     config = load_copy_config()
     if config.trade_mode != "live" or not KEYPAIR_LOADED:
         return
