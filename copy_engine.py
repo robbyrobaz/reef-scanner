@@ -80,6 +80,10 @@ LIVE_FORCE_EXIT_MIN = float(os.getenv("LIVE_FORCE_EXIT_MIN", "0"))  # 0 = disabl
 # 4s matches our observed live execution lag (2-6s range). Set to 0 to disable
 # and fall back to source-price-as-fill (old behavior).
 WATCH_SIM_LAG_S = float(os.getenv("WATCH_SIM_LAG_S", "4.0"))
+# Slip gate for live BUYs: skip if Jupiter quote at T+2s is more than this %
+# above source price. 5% is the default — stops us from chasing already-pumped
+# entries while allowing normal drift. Set env to tune.
+LIVE_SLIP_GATE_PCT = float(os.getenv("LIVE_SLIP_GATE_PCT", "5.0"))
 
 # ── Shared state ─────────────────────────────────────────────────────────────
 # Dedup: sigs seen by any listener (prevents double-execution across WS + polling)
@@ -676,6 +680,29 @@ async def _execute_signal(
         save_copy_trade(trade)
         save_paper_positions(paper_positions)
     else:
+        # ── Slip gate for live BUYs ───────────────────────────────────────────
+        # Before committing real SOL, fetch a Jupiter quote at roughly the same
+        # lag we'll land at (~4s) and compare vs source price. Skip if adverse
+        # beyond LIVE_SLIP_GATE_PCT. Prevents the "+20% entry slip" bleed that
+        # killed the Apr 17 live session on sniped wallets.
+        if action == "BUY" and price_sol > 0:
+            try:
+                # brief wait already close to our landing time
+                await asyncio.sleep(2.0)
+                sim_price = await _simulate_live_quote_price("BUY", token_mint, scaled)
+                if sim_price and sim_price > 0:
+                    ratio = sim_price / price_sol
+                    adverse_pct = (ratio - 1) * 100  # positive = we'd pay more than source
+                    if adverse_pct > LIVE_SLIP_GATE_PCT:
+                        print(f"  🛑 {tag}LIVE BUY SKIP — slip gate: Jupiter quote {adverse_pct:+.1f}% > {LIVE_SLIP_GATE_PCT}% threshold (src {price_sol:.3e} vs sim {sim_price:.3e})")
+                        trade.status = "skipped_slip"
+                        trade.error = f"slip_gate_{adverse_pct:.1f}pct"
+                        save_copy_trade(trade)
+                        # release the cooldown that consensus_processor set
+                        _token_cooldown.pop(token_mint, None)
+                        return
+            except Exception as e:
+                print(f"  ⚠ slip gate check errored: {e} — proceeding without gate")
         print(f"  🔴 {tag}LIVE {action} {scaled:.4f} SOL → {token_mint[:16]}...")
         success = await execute_copy_trade(trade)
         trade.status = "confirmed" if success else "failed"
