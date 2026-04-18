@@ -533,9 +533,19 @@ async def execute_copy_trade(trade: CopyTrade) -> bool:
         # Slippage 500 bps (5%) — 1000 bps was inviting sandwich attacks while
         # still failing on MEV-hot pools. Tighter slip sacrifices some fills but
         # protects the ones that do land from being eaten.
+        # Pass source price + per-wallet slip tolerance so Jupiter-quote gate
+        # can abort before signing if fill has drifted past threshold.
+        config_entry = load_copy_config().copies.get(trade.source_wallet)
+        gate_pct = (getattr(config_entry, "slip_tolerance_pct", None)
+                    if config_entry else None)
+        if gate_pct is None: gate_pct = LIVE_SLIP_GATE_PCT
+        decimals = await _get_token_decimals(trade.token_mint) if trade.action == "BUY" else 9
         result = await execute_swap_legacy(
             KEYPAIR_LOADED, in_mint, out_mint,
             trade.scaled_amount_sol, slippage_bps=500,
+            source_price_sol=trade.source_price_sol,
+            slip_gate_pct=gate_pct,
+            token_decimals=decimals,
         )
 
         if result.success:
@@ -708,29 +718,10 @@ async def _execute_signal(
         save_copy_trade(trade)
         save_paper_positions(paper_positions)
     else:
-        # ── Slip gate for live BUYs ───────────────────────────────────────────
-        # Before committing real SOL, fetch a Jupiter quote at roughly the same
-        # lag we'll land at (~4s) and compare vs source price. Skip if adverse
-        # beyond LIVE_SLIP_GATE_PCT. Prevents the "+20% entry slip" bleed that
-        # killed the Apr 17 live session on sniped wallets.
-        if action == "BUY" and price_sol > 0:
-            try:
-                # brief wait already close to our landing time
-                await asyncio.sleep(2.0)
-                sim_price = await _simulate_live_quote_price("BUY", token_mint, scaled)
-                if sim_price and sim_price > 0:
-                    ratio = sim_price / price_sol
-                    adverse_pct = (ratio - 1) * 100  # positive = we'd pay more than source
-                    if adverse_pct > LIVE_SLIP_GATE_PCT:
-                        print(f"  🛑 {tag}LIVE BUY SKIP — slip gate: Jupiter quote {adverse_pct:+.1f}% > {LIVE_SLIP_GATE_PCT}% threshold (src {price_sol:.3e} vs sim {sim_price:.3e})")
-                        trade.status = "skipped_slip"
-                        trade.error = f"slip_gate_{adverse_pct:.1f}pct"
-                        save_copy_trade(trade)
-                        # release the cooldown that consensus_processor set
-                        _token_cooldown.pop(token_mint, None)
-                        return
-            except Exception as e:
-                print(f"  ⚠ slip gate check errored: {e} — proceeding without gate")
+        # Slip gate moved INSIDE execute_copy_trade → execute_swap_legacy (Apr 18).
+        # Old T+2s pre-exec gate was measuring at the wrong time (fills land at
+        # T+10s, much later). New gate compares Jupiter's actual returned quote
+        # right before tx signing — catches real slip, no wasted RPC calls.
         print(f"  🔴 {tag}LIVE {action} {scaled:.4f} SOL → {token_mint[:16]}...")
         success = await execute_copy_trade(trade)
         trade.status = "confirmed" if success else "failed"

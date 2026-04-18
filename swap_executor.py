@@ -40,6 +40,15 @@ _jupiter_cooldown_until: float = 0.0
 
 # ── Constants ───────────────────────────────────────────────────────────
 JUPITER_QUOTE_API = "https://api.jup.ag/swap/v1/quote"
+
+# Jito Block Engine — submits txs to land in the same block as the target tx.
+# Jupiter v1 swap API accepts jitoTipLamports which embeds a tip instruction;
+# we then POST to Jito's /api/v1/transactions instead of regular RPC.
+# Drops our latency from ~8s to ~400ms (single block) when it works.
+# Docs: https://docs.jito.wtf/lowlatencytxnsend/
+JITO_BLOCK_ENGINE_URL = os.getenv("JITO_BLOCK_ENGINE_URL", "https://mainnet.block-engine.jito.wtf")
+JITO_TIP_LAMPORTS = int(os.getenv("JITO_TIP_LAMPORTS", "100000"))  # 0.0001 SOL default
+JITO_ENABLED = os.getenv("JITO_ENABLED", "1") == "1"
 JUPITER_SWAP_API = "https://api.jup.ag/swap/v1/swap"
 JUPITER_PRICE_API = "https://api.jup.ag/price/v2"
 SOL_MINT = "So11111111111111111111111111111111111111112"
@@ -352,6 +361,9 @@ async def execute_swap_legacy(
     output_mint: str,
     amount_sol: float,
     slippage_bps: int = 50,
+    source_price_sol: float = 0.0,
+    slip_gate_pct: float = 0.0,
+    token_decimals: int = 6,
 ) -> SwapResult:
     """
     Execute swap using legacy transaction format (simpler, more compatible).
@@ -401,11 +413,35 @@ async def execute_swap_legacy(
                     body = await resp.text()
                     return SwapResult(success=False, error=f"Quote error {resp.status}: {body[:150]}")
                 quote = await resp.json()
-            
+
+            # ── SLIP GATE (moved here Apr 18, was broken at T+2s) ──────────
+            # Compute our effective price from the quote. The quote IS what
+            # we'll get (Jupiter commits to routing atomically once we submit).
+            # Abort the swap before signing if adverse slip > gate threshold.
+            if slip_gate_pct > 0 and source_price_sol > 0:
+                try:
+                    in_amt = int(quote.get("inAmount") or 0)
+                    out_amt = int(quote.get("outAmount") or 0)
+                    if in_amt > 0 and out_amt > 0:
+                        # For BUY (SOL in, token out): our_price = SOL_spent / tokens_got
+                        # For SELL (token in, SOL out): our_price = SOL_got / tokens_spent
+                        if input_mint == SOL_MINT:
+                            our_price = (in_amt / 1e9) / (out_amt / (10 ** token_decimals))
+                        else:
+                            our_price = (out_amt / 1e9) / (in_amt / (10 ** token_decimals))
+                        adverse_pct = ((our_price / source_price_sol) - 1) * 100 if input_mint == SOL_MINT \
+                                      else (1 - (our_price / source_price_sol)) * 100
+                        if adverse_pct > slip_gate_pct:
+                            print(f"    🛑 SLIP GATE pre-sign: {adverse_pct:+.1f}% > {slip_gate_pct}% (src {source_price_sol:.3e} vs our {our_price:.3e}) — aborting swap")
+                            return SwapResult(success=False, error=f"slip_gate_{adverse_pct:.1f}pct")
+                except Exception as e:
+                    print(f"    ⚠ slip-gate calc err (proceeding without gate): {e}")
+
             # Dynamic priority fee — Jupiter estimates based on recent block
             # percentiles for the specific writable accounts in this swap, capped
             # at maxLamports so small trades can't be eaten alive.
-            # - maxLamports 500k = 0.0005 SOL cap (5% of 0.01 trade, absorbable on PF 3.33)
+            # - maxLamports 1.5M = 0.0015 SOL cap (bumped Apr 18 from 500k for
+            #   faster block inclusion on whale-copy at high urgency)
             # - global: false → local fee market (better for specific pump-amm pools)
             # - priorityLevel "high" → ~75th percentile of recent fees
             # - dynamicComputeUnitLimit → don't overpay compute on unused budget
@@ -416,12 +452,16 @@ async def execute_swap_legacy(
                 "dynamicComputeUnitLimit": True,
                 "prioritizationFeeLamports": {
                     "priorityLevelWithMaxLamports": {
-                        "maxLamports": 500_000,
+                        "maxLamports": 1_500_000,
                         "global": False,
                         "priorityLevel": "high",
                     }
                 },
             }
+            # Jito tip — Jupiter embeds a tip transfer in the tx. Required for
+            # Jito Block Engine to accept + prioritize the tx. Cost: ~$0.024.
+            if JITO_ENABLED:
+                swap_payload["jitoTipLamports"] = JITO_TIP_LAMPORTS
             async with session.post(JUPITER_SWAP_API, json=swap_payload, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                 if resp.status != 200:
                     return SwapResult(success=False, error=f"Swap API error {resp.status}")
@@ -440,33 +480,50 @@ async def execute_swap_legacy(
             # Re-sign: create new VersionedTransaction from message + our keypair
             signed_tx = VersionedTransaction(unsigned_tx.message, [keypair])
             
-            # Send
-            async with session.post(
-                RPC_URL,
-                json={
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "sendTransaction",
-                    "params": [
-                        base64.b64encode(bytes(signed_tx)).decode(),
-                        {"encoding": "base64", "skipPreFlight": True, "maxRetries": 3},
-                    ],
-                },
-                timeout=aiohttp.ClientTimeout(total=30),
-            ) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    if "result" in data:
-                        return SwapResult(
-                            success=True,
-                            signature=data["result"],
-                            input_amount=amount_sol,
-                            price_sol=float(quote.get("inAmount", 0)) / max(int(quote.get("outAmount", 1)), 1) / 1e9,
-                        )
-                    elif "error" in data:
-                        return SwapResult(success=False, error=str(data["error"]))
-                else:
-                    return SwapResult(success=False, error=f"RPC error {resp.status}")
+            # ── Send: Jito Block Engine first, RPC fallback ────────────────
+            # Jito lands us in the same block as the target tx (~400ms vs ~8s).
+            # If Jito rejects or times out, fall back to regular RPC send.
+            tx_b64_signed = base64.b64encode(bytes(signed_tx)).decode()
+            sig = None; send_err = None; used_jito = False
+            if JITO_ENABLED:
+                jito_url = f"{JITO_BLOCK_ENGINE_URL}/api/v1/transactions"
+                try:
+                    async with session.post(jito_url, json={
+                        "jsonrpc": "2.0", "id": 1, "method": "sendTransaction",
+                        "params": [tx_b64_signed, {"encoding": "base64", "skipPreFlight": True, "maxRetries": 0}],
+                    }, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            if "result" in data:
+                                sig = data["result"]; used_jito = True
+                                print(f"    ⚡ Jito-landed: {sig[:20]}... tip={JITO_TIP_LAMPORTS}")
+                            else:
+                                send_err = f"Jito rejected: {data.get('error', data)}"
+                        else:
+                            send_err = f"Jito HTTP {resp.status}: {(await resp.text())[:100]}"
+                except Exception as e:
+                    send_err = f"Jito err: {type(e).__name__}: {e}"
+            # Fallback to regular RPC if Jito didn't work
+            if not sig:
+                if send_err: print(f"    ⚠ {send_err} — falling back to RPC")
+                async with session.post(RPC_URL, json={
+                    "jsonrpc": "2.0", "id": 1, "method": "sendTransaction",
+                    "params": [tx_b64_signed, {"encoding": "base64", "skipPreFlight": True, "maxRetries": 3}],
+                }, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        if "result" in data: sig = data["result"]
+                        elif "error" in data: return SwapResult(success=False, error=str(data["error"]))
+                    else:
+                        return SwapResult(success=False, error=f"RPC error {resp.status}")
+            if sig:
+                return SwapResult(
+                    success=True,
+                    signature=sig,
+                    input_amount=amount_sol,
+                    price_sol=float(quote.get("inAmount", 0)) / max(int(quote.get("outAmount", 1)), 1) / 1e9,
+                )
+            return SwapResult(success=False, error=send_err or "unknown send failure")
                         
     except Exception as e:
         return SwapResult(success=False, error=str(e))

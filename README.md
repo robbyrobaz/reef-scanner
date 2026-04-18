@@ -17,7 +17,9 @@
 
 **Key design choices (Apr 18 2026):**
 - Proportional alloc: `min(0.05, max(0.01, source_sol × 0.001))` — conviction-weighted, cap at 0.05 SOL
-- Slip gate: 5% (correct for these wallets — NEVER raise to "catch more" — random-whale large buys are −19% median)
+- **Slip gate: moved INSIDE execute_copy_trade pre-sign** (was broken at T+2s). Per-wallet `slip_tolerance_pct` calibrated from 30d source ROI (25% for 9EdcipnA5h with +766% avg, 5% for 6hXBg2nx with +93% avg)
+- **Priority fee cap: 1.5M lamports** (bumped from 500k Apr 18) — saves ~1s on block inclusion
+- **Jito Block Engine**: tx submit path → same-block landing as source (~400ms vs ~8s regular RPC). 100k lamports (0.0001 SOL) tip per tx. Falls back to RPC if Jito rejects.
 - Orphan sweep every 30 min: auto-SELL untracked holdings + force-exit positions >6h old
 - SELL-guard: skip LIVE SELL if we have no matching open (prevents "no balance" failures)
 

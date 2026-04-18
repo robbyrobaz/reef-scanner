@@ -52,6 +52,10 @@ class CopyEntry:
     # >= min_source_sol. CSV error field tagged "watch_large" for dashboard filter.
     strategy: str = "default"
     min_source_sol: float = 0.0
+    # Per-wallet slip tolerance (%) — replaces flat LIVE_SLIP_GATE_PCT.
+    # Higher for whales with known high avg ROI (20% slip eats less edge if
+    # they avg +300% per trip). Set to None to use global default.
+    slip_tolerance_pct: Optional[float] = None
 
 
 @dataclass
