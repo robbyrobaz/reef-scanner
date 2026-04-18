@@ -564,15 +564,20 @@ async def _execute_signal(
 # ── Consensus processor ───────────────────────────────────────────────────────
 async def consensus_processor(paper_positions_ref: Dict) -> None:
     """
-    Every 2s: check if any token has MIN_WALLETS_CONSENSUS independent buy signals
-    within CONSENSUS_WINDOW_S. If so, fire the trade.
+    Checks signal buffer and fires trades. Tick rate scales with consensus setting:
 
-    When MIN_WALLETS_CONSENSUS=1, every signal fires immediately on next tick (≤2s delay).
-    When MIN_WALLETS_CONSENSUS=2, we require 2 different watched wallets to buy the
-    same token within CONSENSUS_WINDOW_S — dramatically improves signal quality.
+    MIN_WALLETS_CONSENSUS=1 → 0.1s tick, near-immediate fire (no benefit to waiting
+      when any single signal qualifies; the 2s tick was pure added latency on top
+      of our already-2-6s lag behind source)
+    MIN_WALLETS_CONSENSUS>=2 → 2s tick, gives wallets time to accumulate before
+      the window expires
+
+    CONSENSUS_WINDOW_S is the rolling window for de-duping same-mint signals and
+    counting distinct wallets for the consensus vote — independent of tick rate.
     """
+    tick = 0.1 if MIN_WALLETS_CONSENSUS == 1 else 2.0
     while True:
-        await asyncio.sleep(2)
+        await asyncio.sleep(tick)
         now = time.time()
         config = load_copy_config()
 
