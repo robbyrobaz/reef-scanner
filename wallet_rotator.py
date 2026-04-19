@@ -435,6 +435,7 @@ def run_rotation(dry_run: bool = False):
                 enabled       = True,
                 alloc_sol     = COPY_ALLOC_SOL,
                 label         = label,
+                copy_mode     = "watch",  # rotator never promotes to live; manual only
             )
             log(f"  Added   {w['address'][:20]}...  label={label}")
 
