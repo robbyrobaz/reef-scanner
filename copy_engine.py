@@ -909,13 +909,13 @@ async def helius_logs_listener(shard_wallets: Optional[List[str]] = None, shard_
             ws_url = urls[ws_url_index % len(urls)]
             label = ("Helius" if "helius" in ws_url else "Solana public") + (f"-{shard_label}" if shard_label else "")
             print(f"  🔔 Solana WS ({label}): connecting ({len(wallets)} wallets)...")
-            # ping_interval=30 keeps connection alive. publicnode was dropping us
-            # with 1013 "Connection timeout exceeded" ~10×/hour when idle — pings
-            # fix that. ping_timeout=20 lets us detect dead conns faster.
+            # ping_interval=None — tried 30s keepalive, publicnode doesn't accept
+            # our pings cleanly and triggered 1011 "keepalive ping timeout" drops
+            # at 24/hour (WORSE than the 10/hour 1013 we were trying to fix).
+            # Reverted. If WS goes idle >5min the outer ws.recv() timeout catches it.
             async with websockets.connect(
                 ws_url,
-                ping_interval=30,
-                ping_timeout=20,
+                ping_interval=None,
                 close_timeout=10,
                 max_size=10 * 1024 * 1024,
             ) as ws:
@@ -1298,6 +1298,12 @@ async def _sweep_orphans_and_stale(paper_positions: Dict) -> None:
         await asyncio.sleep(2)
 
     for key, mint, pos, age in stale:
+        # Respect the in-flight SELL marker — if a signal-driven SELL is already
+        # running for this position, skip the stale-exit (it'll be closed anyway)
+        if key in _sell_inflight:
+            print(f"    ⏰ stale SELL skip {mint[:16]}... (signal SELL already in flight)")
+            continue
+        _sell_inflight.add(key)
         src = key.split("::", 1)[0]
         scaled = pos.get("scaled_amount", 0.01)
         print(f"    ⏰ stale SELL {mint[:16]}... age={age/3600:.1f}h (source {src[:14]} didn't sell)")
@@ -1319,6 +1325,8 @@ async def _sweep_orphans_and_stale(paper_positions: Dict) -> None:
             save_copy_trade(trade)
         except Exception as e:
             print(f"      ⚠️ stale sell err: {e}")
+        finally:
+            _sell_inflight.discard(key)
         await asyncio.sleep(2)
 
 
